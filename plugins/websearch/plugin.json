@@ -1,0 +1,16 @@
+{
+  "name": "websearch",
+  "description": "Search the web (DuckDuckGo) and fetch any URL as readable text.",
+  "tools": [
+    {
+      "name": "web_search",
+      "description": "Web search. Returns titles, URLs and snippets for anything that is missing or unknown.",
+      "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "max_results": {"type": "integer"}}, "required": ["query"]}
+    },
+    {
+      "name": "fetch_url",
+      "description": "Fetch a URL and return its text content (tags stripped, truncated).",
+      "parameters": {"type": "object", "properties": {"url": {"type": "string"}, "max_chars": {"type": "integer"}}, "required": ["url"]}
+    }
+  ]
+}
