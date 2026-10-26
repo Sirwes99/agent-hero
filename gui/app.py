@@ -1,398 +1,576 @@
-#!/usr/bin/env python3
-"""
-Agent Hero GUI - Tkinter desktop app.
+"""Agent Hero GUI \u2014 desktop control panel for the universal local agent host.
 
-Tabs (left sidebar): Chat, Settings, Plugins, Folders.
-Version: 1.1.0
+Versioned (see VERSION below). Navigation is a left-side column of modern flat
+buttons: Chat / Settings / Plugins / Folders, with the content area on the right.
+Every control shows a concise hover tooltip. Packages cleanly with PyInstaller
+into one .exe.
 """
-import json, os, sys, threading, traceback
-from pathlib import Path
+import json
+import os
+import sys
+import threading
+import tkinter as tk
+from tkinter import filedialog, ttk
 
 VERSION = "1.1.0"
-APP_NAME = "Agent Hero"
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
+def base_dir():
+    """Directory holding config.json and plugins/ (the exe's data dir when frozen)."""
+    if getattr(sys, "frozen", False):
+        return os.path.abspath(getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(sys.executable))))
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-try:
-    from agenthero.common import load_config, allowed_roots, safe_path
-    from agenthero.llm_client import LLMClient
-    from agenthero.registry import PluginRegistry
-except Exception as e:
-    print(f"Cannot import agent package: {e}")
-    raise
+sys.path.insert(0, base_dir())  # make the agenthero package importable when run from source
 
-import tkinter as tk
-from tkinter import ttk
+from agenthero.agent_loop import AgentLoop
+from agenthero.llm_client import LLMClient
+from agenthero.registry import PluginRegistry
 
-# ---- theme -------------------------------------------------------------
-BG = "#1e1f24"
-PANEL = "#262830"
-CARD = "#2c2f3a"
-EDGE = "#3d4150"        # grey divider lines between panes
-SHADOW = "#17181d"      # fake drop shadow behind cards
-FG = "#e8e9ef"
-MUTED = "#9aa0b4"
-ACCENT = "#6ea8ff"
-OK = "#57c785"
-WARN = "#f2b347"
-ERR = "#e5737a"
+BASE = base_dir()
+CONFIG_PATH = os.path.join(BASE, "config.json")
+PLUGINS_DIR = os.path.join(BASE, "plugins")
 
+BG = "#1b1f2a"      # window background
+PANEL = "#232938"   # sidebar / panel background
+CARD = "#272e40"    # input card background
+ACCENT = "#5b8cff"  # selected nav button + primary buttons
+HOVER = "#2f3a56"   # nav button hover highlight
+TEXT = "#e6e9f0"
+MUTED = "#9aa3b8"
+SHADOW = "#0c0f16"   # fake drop-shadow color (darker than BG)
+EDGE = "#3d4763"     # grey outline between panes and card rings
+
+def make_card(parent, inner_bg=CARD):
+    """Wrap a widget in a fake drop-shadow card: SHADOW strip on bottom/right + 1px EDGE ring."""
+    outer = tk.Frame(parent, bg=SHADOW)
+    ring = tk.Frame(outer, bg=EDGE)
+    body = tk.Frame(ring, bg=inner_bg)
+    body.pack(in_=ring, fill="both", expand=True, padx=1, pady=1)
+    ring.pack(in_=outer, fill="both", expand=True, padx=(0, 3), pady=(0, 3))
+    return outer, body
+
+def load_config():
+    if os.path.exists(CONFIG_PATH):
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+    else:
+        cfg = {}
+    llm = cfg.setdefault("llm", {})
+    llm.setdefault("base_url", "http://localhost:1234")
+    llm.setdefault("model", "local-model")
+    llm.setdefault("api_key", "")
+    llm.setdefault("timeout_seconds", 180)
+    agent = cfg.setdefault("agent", {})
+    agent.setdefault("max_iterations", 40)
+    agent.setdefault("system_prompt", "")
+    sec = cfg.setdefault("security", {})
+    sec.setdefault("allowed_roots", ["."])
+    sec.setdefault("shell_timeout_default", 120)
+    cfg.setdefault("plugins_enabled", {})
+    cfg.setdefault("version", VERSION)
+    return cfg
+
+def save_config(cfg):
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2)
+
+class TooltipManager:
+    """Hover tooltips: bound widgets show a small dark card near the cursor."""
+
+    def __init__(self, root):
+        self.root = root
+        self.win = None
+
+    def show(self, widget, text):
+        if not text or self.win is not None:
+            return
+        x = widget.winfo_rootx() + 14
+        y = widget.winfo_rooty() + 10
+        self.win = tk.Toplevel(self.root)
+        self.win.overrideredirect(True)
+        label = tk.Label(
+            self.win, text=text, background="#2b3145", foreground=TEXT,
+            font=("Segoe UI", 9), padx=10, pady=7, justify="left", wraplength=340,
+        )
+        label.pack()
+        self.win.geometry(f"+{x}+{y}")
+
+    def hide(self):
+        if self.win:
+            self.win.destroy()
+            self.win = None
+
+    def bind(self, widget, text):
+        widget.bind("<Enter>", lambda e: self.show(widget, text))
+        widget.bind("<Leave>", lambda e: self.hide())
+
+class SideButton(tk.Button):
+    """Flat modern sidebar button: hover highlight, accent color when selected."""
+
+    def __init__(self, master, text, tip_mgr, hint, on_click):
+        super().__init__(
+            master, text=text, bg=PANEL, fg=TEXT, relief="flat", bd=0,
+            font=("Segoe UI", 10), padx=16, pady=9,
+            activebackground="#3d6fe0", activeforeground="white", command=on_click)
+        self.selected = False
+        tip_mgr.bind(self, hint)
+        self.bind("<Enter>", lambda e: self._hover(True))
+        self.bind("<Leave>", lambda e: self._hover(False))
+
+    def _hover(self, on):
+        if not self.selected:
+            self.configure(bg=HOVER if on else PANEL)
 
 class App:
-    def __init__(self):
-        self.cfg_path = ROOT / "config.json"
-        self.cfg = load_config(self.cfg_path)
-        self.reg = PluginRegistry(ROOT / "plugins")
-        self.llm = LLMClient(self.cfg["llm"]["base_url"], self.cfg["llm"]["model"])
-        self.host_state = {"running": False, "port": 8765}
-
-        self.root = tk.Tk()
-        self.root.title(f"{APP_NAME} v{VERSION}")
-        self.root.configure(bg=BG)
-        self.root.geometry("1080x720")
+    def __init__(self, root):
+        self.root = root
+        root.title(f"Agent Hero {VERSION} \u2014 Universal Local Agent Host")
+        root.geometry("1160x800")
+        root.minsize(940, 660)
+        root.configure(bg=BG)
 
         style = ttk.Style()
-        style.theme_use("clam")
-        style.configure("TFrame", background=PANEL)
-        style.configure("TLabel", background=PANEL, foreground=FG)
-        style.configure("TButton", background=CARD, foreground=FG, borderwidth=0, padding=(10, 6))
-        style.configure("TEntry", fieldbackground=CARD, foreground=FG, insertbackground=ACCENT)
-        style.configure("TRadiobutton", background=PANEL, foreground=FG)
-        style.configure("TCheckbutton", background=PANEL, foreground=FG)
-        style.configure("TNotebook.Tab", background=PANEL, foreground=FG, padding=(10, 6))
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+        style.configure("Accent.TButton", background=ACCENT, foreground="white",
+                       bordercolor="#3d6fe0", font=("Segoe UI", 10, "bold"), padding=(14, 8))
+        style.configure("Ghost.TButton", background=PANEL, foreground=TEXT,
+                       font=("Segoe UI", 9), padding=(10, 5))
+        style.configure("Dark.TEntry", fieldbackground=CARD, foreground=TEXT,
+                       insertoffset=6, padding=(7, 7))
+        style.configure("TCheckbutton", background=PANEL, foreground=TEXT)
+        style.configure("TSpinbox", fieldbackground=CARD, foreground=TEXT)
 
-        # top bar
-        top = tk.Frame(self.root, bg=PANEL, height=48)
+        self.tip = TooltipManager(root)
+        self.cfg = load_config()
+        self.registry = PluginRegistry(PLUGINS_DIR, enabled=self.cfg["plugins_enabled"])
+        llm = self.cfg["llm"]
+        self.client = LLMClient(llm.get("base_url"), llm.get("model"),
+                               llm.get("api_key", ""), llm.get("timeout_seconds", 180))
+        self.loop = AgentLoop(self.client, self.registry,
+                             self.cfg["agent"].get("max_iterations", 40))
+
+        self.busy = False
+        self.result = None
+        self.llm_ok = None
+        self.web_server = None
+        self.web_thread = None
+
+        # Top bar: title + version
+        top = tk.Frame(root, bg=BG)
         top.pack(side="top", fill="x")
-        tk.Label(top, text=f"{APP_NAME}", font=("Segoe UI", 15, "bold"), bg=PANEL, fg=ACCENT).pack(side="left", padx=14)
-        tk.Label(top, text=f"v{VERSION}", font=("Segoe UI", 9), bg=PANEL, fg=MUTED).pack(side="left")
-        self.status_var = tk.StringVar(value="starting...")
-        tk.Label(top, textvariable=self.status_var, font=("Segoe UI", 9), bg=PANEL, fg=MUTED).pack(side="right", padx=14)
+        div_top = tk.Frame(root, bg=EDGE, height=2)
+        div_top.pack(side="top")
+        title = tk.Label(top, text="Agent Hero", font=("Segoe UI", 15, "bold"), fg=TEXT, bg=BG)
+        ver = tk.Label(top, text=f"v{VERSION}", fg=MUTED, bg=BG, font=("Segoe UI", 9))
+        self.tip.bind(title, "Agent Hero \u2014 a local AI that plans, uses tools, and builds things.")
+        self.tip.bind(ver, f"App version {VERSION}.")
+        title.pack(side="left", padx=(14, 8), pady=10)
+        ver.pack(side="left")
 
-        # grey divider under top bar
-        tk.Frame(self.root, bg=EDGE, height=2).pack(side="top", fill="x")
+        # Bottom status bar (packed before the main area so it keeps its slot)
+        bar = tk.Frame(root, bg=PANEL)
+        bar.pack(side="bottom", fill="x")
+        div_bar = tk.Frame(root, bg=EDGE, height=2)
+        div_bar.pack(side="bottom")
+        self.status_lbl = tk.Label(bar, text="", fg=MUTED, bg=PANEL, font=("Segoe UI", 9), padx=12)
+        self.tip.bind(self.status_lbl, "Live status: LLM reachability, loaded tools, web host state.")
+        self.status_lbl.pack(side="right")
 
-        # left sidebar + content
-        body = tk.Frame(self.root, bg=BG)
-        body.pack(side="top", fill="both", expand=True)
+        # Main area: left sidebar navigation + content on the right
+        main = tk.Frame(root, bg=BG)
+        main.pack(fill="both", expand=True)
+        self.sidebar = tk.Frame(main, bg=PANEL, width=180)
+        self.sidebar.pack(side="left", fill="y")
+        div_side = tk.Frame(main, bg=EDGE, width=2)
+        div_side.pack(side="left", fill="y")
+        self.content = tk.Frame(main, bg=BG)
+        self.content.pack(side="right", fill="both", expand=True)
 
-        self.nav = ttk.Notebook(body)
-        self.nav.pack(side="left", fill="y")
-        for name in ("Chat", "Settings", "Plugins", "Folders"):
-            self.nav.add(name, text=name)
-        # grey divider between sidebar and content
-        tk.Frame(body, bg=EDGE, width=2).pack(side="left", fill="y")
+        nav = [
+            ("Chat", "Run a task against your local model \u2014 tool steps appear below."),
+            ("Settings", "LLM endpoint and model, agent limits, optional web host."),
+            ("Plugins", "Enable or disable each plugin for the agent."),
+            ("Folders", "Allow or deny folders the agent may read and write."),
+        ]
+        self.pages = {}
+        for i, (name, hint) in enumerate(nav):
+            btn = SideButton(self.sidebar, name, self.tip, hint, lambda n=name: self._select(n))
+            page = tk.Frame(self.content, bg=BG)
+            self.pages[name] = (btn, page)
+            btn.pack(side="top", fill="x", pady=(16 if i == 0 else 8, 0), padx=12)
 
-        self.content = ttk.Notebook(body)
-        self.content.pack(side="left", fill="both", expand=True)
-        for name in ("Chat", "Settings", "Plugins", "Folders"):
-            f = tk.Frame(self.content, bg=PANEL, padx=14, pady=10)
-            self.content.add(name, text=name, content=f)
-
-        # grey divider above status bar
-        tk.Frame(self.root, bg=EDGE, height=2).pack(side="bottom", fill="x")
-        self.statusbar = tk.Frame(self.root, bg=PANEL, height=30)
-        self.statusbar.pack(side="bottom", fill="x")
-        self.sb_llm = tk.Label(self.statusbar, text="LLM: checking...", font=("Segoe UI", 9), bg=PANEL, fg=MUTED)
-        self.sb_llm.pack(side="left", padx=10)
-        self.sb_tools = tk.Label(self.statusbar, text=f"Tools: {len(self.reg.all_tools())} loaded", font=("Segoe UI", 9), bg=PANEL, fg=MUTED)
-        self.sb_tools.pack(side="left")
-        self.sb_host = tk.Label(self.statusbar, text="Web host: stopped", font=("Segoe UI", 9), bg=PANEL, fg=MUTED)
-        self.sb_host.pack(side="right", padx=10)
+        ver_lbl = tk.Label(self.sidebar, text=f"v{VERSION}", fg=MUTED, bg=PANEL, font=("Segoe UI", 8))
+        self.tip.bind(ver_lbl, f"App version {VERSION}.")
+        ver_lbl.pack(side="bottom", pady=(0, 12), padx=14)
 
         self._build_chat()
         self._build_settings()
         self._build_plugins()
         self._build_folders()
-        self._refresh_status()
 
-    # ---- helpers ---------------------------------------------------------
-    def make_card(self, parent):
-        """A card with a fake drop shadow: shadow frame behind, card on top."""
-        sh = tk.Frame(parent, bg=SHADOW)
-        sh.pack(fill="both", expand=True, pady=(4, 0), padx=(4, 0))
-        card = tk.Frame(sh, bg=CARD, bd=1, relief="raised")
-        card.pack(fill="both", expand=True)
-        return card
+        self._select("Chat")
+        self._update_status()
+        root.after(400, self._check_health)
 
-    def _tip(self, w, text):
-        tip = tk.Toplevel(self.root); tip.withdraw()
-        w.bind("<Enter>", lambda e: self._show_tip(w, text))
-        w.bind("<Leave>", lambda e: tip.withdraw())
+    def _select(self, name):
+        for n, (btn, page) in self.pages.items():
+            sel = n == name
+            btn.selected = sel
+            btn.configure(bg=ACCENT if sel else PANEL, fg="white" if sel else TEXT)
+            if sel:
+                page.pack(fill="both", expand=True)
+            else:
+                page.forget()
 
-    def _show_tip(self, w, text):
-        tip = tk.Toplevel(self.root)
-        tip.overrideredirect(True)
-        x, y = w.winfo_rootx() + 12, w.winfo_rooty() - 8
-        tip.geometry(f"{max(160, len(text) * 9)}x34+{x}+{y}")
-        lbl = tk.Label(tip, text=text, bg="#2a2c35", fg=FG, font=("Segoe UI", 9), anchor="nw")
-        lbl.pack(fill="both", expand=True)
+    def _persist(self):
+        """Save config, stamping it with the app version for change tracking."""
+        self.cfg["version"] = VERSION
+        save_config(self.cfg)
 
-    def _refresh_status(self):
-        ok = self.llm.ping()
-        self.sb_llm.config(text=f"LLM: {'reachable' if ok else 'NOT reachable'}", fg=OK if ok else ERR)
-        self.status_var.set(f"{APP_NAME} v{VERSION}")
-
-    # ---- Chat tab ----------------------------------------------------------
+    # ------------------------------------------------------------------ Chat
     def _build_chat(self):
-        f = self.content.nametowidget("Chat")
-        card = self.make_card(f)
-        tk.Label(card, text="Task for the agent", font=("Segoe UI", 10, "bold"), bg=CARD, fg=FG).pack(anchor="nw")
-        self.prompt = tk.Text(card, height=5, bg=CARD, fg=FG, relief="flat", bd=0)
-        self.prompt.pack(fill="x", pady=(6, 8))
-        btns = tk.Frame(card, bg=CARD)
-        btns.pack(anchor="nw")
-        b_run = ttk.Button(btns, text="Run agent", command=self._run_agent)
-        b_run.pack(side="left", padx=(0, 8))
-        self._tip(b_run, "Send the task to your local LLM; tool steps appear below.")
-        b_stop = ttk.Button(btns, text="Stop", command=lambda: setattr(self, "_stop", True))
-        b_stop.pack(side="left")
-        self._tip(b_stop, "Abort the current agent run.")
+        page = self.pages["Chat"][1]
 
-        ans_card = self.make_card(f)
-        tk.Label(ans_card, text="Answer / steps", font=("Segoe UI", 10, "bold"), bg=CARD, fg=FG).pack(anchor="nw")
-        self.answer = tk.Text(ans_card, height=14, bg=CARD, fg=FG, relief="flat", bd=0)
-        self.answer.pack(fill="both", expand=True, pady=(6, 8))
+        head = tk.Label(page, text="Agent task", font=("Segoe UI", 12, "bold"), fg=TEXT, bg=BG)
+        sub = tk.Label(page, text="Describe what to build or do \u2014 the agent plans, uses tools, and iterates until done.",
+                       fg=MUTED, bg=BG, font=("Segoe UI", 9))
+        head.pack(anchor="nw")
+        sub.pack(anchor="nw")
+
+        row = tk.Frame(page, bg=BG)
+        row.pack(fill="x", pady=(8, 0))
+        card, body = make_card(row)
+        card.pack(side="left", fill="both", expand=True)
+        self.prompt = tk.Text(body, height=5, bg=CARD, fg=TEXT, relief="flat", bd=0,
+                             font=("Consolas", 11), padx=9, pady=9)
+        self.tip.bind(self.prompt, "Type the task here. Example: 'Build a Python CLI that converts CSV to JSON and test it'")
+        self.prompt.pack(side="left", fill="both", expand=True)
+        run = ttk.Button(row, text="Run agent", style="Accent.TButton", command=self._run_agent)
+        self.tip.bind(run, "Send the task to your local model. Tool steps appear below.")
+        run.pack(side="right")
+
+        ans_head = tk.Label(page, text="Final answer", font=("Segoe UI", 10, "bold"), fg=TEXT, bg=BG)
+        ans_head.pack(anchor="nw", pady=(14, 2))
+        card, body = make_card(page)
+        card.pack(fill="x", pady=(0, 12))
+        self.answer = tk.Text(body, height=8, bg=CARD, fg=TEXT, relief="flat", bd=0,
+                             font=("Consolas", 11), padx=9, pady=9, state="disabled")
+        self.tip.bind(self.answer, "The agent's final answer appears here.")
+        self.answer.pack(fill="both", expand=True)
+
+        steps_head = tk.Label(page, text="Tool steps \u2014 hover a step for details",
+                             font=("Segoe UI", 10, "bold"), fg=TEXT, bg=BG)
+        steps_head.pack(anchor="nw")
+        card, self.steps_frame = make_card(page, inner_bg=PANEL)
+        card.pack(fill="both", expand=True, pady=(4, 8))
 
     def _run_agent(self):
         prompt = self.prompt.get("1.0", "end").strip()
-        if not prompt:
-            self.answer.delete("1.0", "end"); self.answer.insert("1.0", "(empty task)")
+        if not prompt or self.busy:
             return
-        self._stop = False
+        self.busy = True
+        self.result = None
+        self._set_steps([])
+        self.status_lbl.configure(text="Working\u2026")
+
         def worker():
             try:
-                from agenthero.agent_loop import AgentLoop
-                loop = AgentLoop(self.llm, self.reg, max_iterations=self.cfg["agent"]["max_iterations"])
-                res = loop.run(prompt)
-                lines = [f"Final answer:\n{res['answer']}", ""]
-                for s in res.get("trace", []):
-                    a = json.dumps(s.get("args", {}))
-                    r = str(s.get("result", ""))[:300]
-                    lines.append(f"[{s['index']}] {s['tool']}({a}) -> {r}")
-                self.answer.delete("1.0", "end")
-                self.answer.insert("1.0", "\n".join(lines))
-            except Exception as e:
-                self.answer.delete("1.0", "end")
-                self.answer.insert("1.0", f"ERROR:\n{traceback.format_exc()}")
+                self.result = self.loop.run([{"role": "user", "content": prompt}])
+            except Exception as exc:
+                self.result = {"final_answer": f"ERROR: {exc}", "steps": 0, "trace": []}
+            self.busy = False
+
         threading.Thread(target=worker, daemon=True).start()
+        self.root.after(250, self._poll)
 
-    # ---- Settings tab -------------------------------------------------------
+    def _poll(self):
+        if not self.busy and self.result is not None:
+            self.answer.configure(state="normal")
+            self.answer.delete("1.0", "end")
+            self.answer.insert("1.0", self.result["final_answer"])
+            self.answer.configure(state="disabled")
+            self._set_steps(self.result.get("trace", []))
+            self.status_lbl.configure(text=f"Done \u2014 {self.result['steps']} step(s).")
+            return
+        self.root.after(250, self._poll)
+
+    def _set_steps(self, trace):
+        for child in self.steps_frame.winfo_children():
+            child.destroy()
+        for t in trace:
+            card = tk.Frame(self.steps_frame, bg=CARD, relief="flat", bd=0)
+            title = tk.Label(card, text=f"step {t['step']}  \u2022  {t['tool']}",
+                            font=("Segoe UI", 9), fg=TEXT, bg=CARD)
+            args_preview = " ".join(f"{k}={v}" for k, v in list(t.get("args", {}).items())[:4])
+            detail = tk.Label(card, text=f"args: {args_preview or '{}'}",
+                             font=("Segoe UI", 8), fg=MUTED, bg=CARD)
+            title.pack(anchor="nw")
+            detail.pack(anchor="nw")
+            card.pack(fill="x", pady=2)
+            hint = (f"{t['tool']} \u2014 args: {json.dumps(t.get('args', {}))}\n"
+                   f"Result:\n{str(t.get('result', ''))[:1500]}")
+            self.tip.bind(card, hint)
+
+    # ------------------------------------------------------------- Settings
     def _build_settings(self):
-        f = self.content.nametowidget("Settings")
-        card = self.make_card(f)
-        rows = [
-            ("LLM base URL", "llm", "base_url", "http://localhost:1234"),
-            ("Model name", "llm", "model", "local-model"),
-            ("Max iterations", "agent", "max_iterations", 12),
-            ("Temperature", "agent", "temperature", 0.2),
-        ]
+        page = self.pages["Settings"][1]
+
+        head = tk.Label(page, text="LLM model control", font=("Segoe UI", 12, "bold"), fg=TEXT, bg=BG)
+        sub = tk.Label(page, text="Point the agent at any OpenAI-compatible local server (LM Studio, Ollama, llama.cpp\u2026).",
+                       fg=MUTED, bg=BG, font=("Segoe UI", 9))
+        head.pack(anchor="nw")
+        sub.pack(anchor="nw")
+
+        card, grid = make_card(page, inner_bg=PANEL)
+        card.pack(fill="x", pady=(10, 4))
         self.entries = {}
-        for label, sec, key, default in rows:
-            r = tk.Frame(card, bg=CARD)
-            r.pack(fill="x", pady=4)
-            tk.Label(r, text=label, font=("Segoe UI", 9), bg=CARD, fg=MUTED).pack(side="left")
-            e = ttk.Entry(r, width=36)
-            e.insert(0, str(default))
-            e.pack(side="right", fill="x")
-            self.entries[key] = (sec, key, e)
-            self._tip(e, f"Sets {label} in config.json.")
 
-        btns = tk.Frame(card, bg=CARD)
-        btns.pack(anchor="nw", pady=(10, 0))
-        b_save = ttk.Button(btns, text="Save settings", command=self._save_settings)
-        b_save.pack(side="left", padx=(0, 8))
-        self._tip(b_save, "Write changes to config.json (stamps the app version).")
-        b_ping = ttk.Button(btns, text="Test LLM connection", command=self._ping_llm)
-        b_ping.pack(side="left")
-        self._tip(b_ping, "Checks whether your local LLM server answers /v1/models.")
+        def field(row, label, value, hint):
+            lab = tk.Label(grid, text=label, font=("Segoe UI", 9), fg=MUTED, bg=PANEL)
+            lab.grid(row=row, column=0, sticky="w")
+            widget = ttk.Entry(grid, style="Dark.TEntry")
+            widget.insert(0, str(value))
+            self.tip.bind(lab, hint)
+            self.tip.bind(widget, hint)
+            widget.grid(row=row, column=1, sticky="we", padx=(8, 0))
+            return widget
 
-        host_card = self.make_card(f)
-        tk.Label(host_card, text="Web host (GUI + API)", font=("Segoe UI", 10, "bold"), bg=CARD, fg=FG).pack(anchor="nw")
-        hbtns = tk.Frame(host_card, bg=CARD)
-        hbtns.pack(anchor="nw", pady=(6, 0))
-        b_start = ttk.Button(hbtns, text="Start web host", command=lambda: self._host_toggle(True))
-        b_start.pack(side="left", padx=(0, 8))
-        self._tip(b_start, "Run the FastAPI server on port 8765 (web UI + API).")
-        b_stop = ttk.Button(hbtns, text="Stop web host", command=lambda: self._host_toggle(False))
-        b_stop.pack(side="left")
-        self._tip(b_stop, "Shut the web host down.")
+        self.entries["base_url"] = field(0, "Base URL", self.cfg["llm"]["base_url"],
+                                         "Server address of your local LLM, e.g. http://localhost:1234")
+        self.entries["model"] = field(1, "Model name", self.cfg["llm"]["model"],
+                                      "The model to use \u2014 it must support function calling.")
+        self.entries["api_key"] = field(2, "API key", self.cfg["llm"].get("api_key", ""),
+                                        "Optional; leave blank for local servers.")
+
+        lab = tk.Label(grid, text="Timeout (s)", font=("Segoe UI", 9), fg=MUTED, bg=PANEL)
+        lab.grid(row=3, column=0, sticky="w")
+        self.entries["timeout_seconds"] = ttk.Spinbox(grid, from_=5, to=600)
+        self.entries["timeout_seconds"].insert(0, str(self.cfg["llm"]["timeout_seconds"]))
+        self.tip.bind(lab, "Max seconds to wait for one model response.")
+        self.tip.bind(self.entries["timeout_seconds"], "Max seconds to wait for one model response.")
+        self.entries["timeout_seconds"].grid(row=3, column=1, sticky="we", padx=(8, 0))
+
+        lab = tk.Label(grid, text="Max steps", font=("Segoe UI", 9), fg=MUTED, bg=PANEL)
+        lab.grid(row=4, column=0, sticky="w")
+        self.entries["max_iterations"] = ttk.Spinbox(grid, from_=1, to=200)
+        self.entries["max_iterations"].insert(0, str(self.cfg["agent"]["max_iterations"]))
+        self.tip.bind(lab, "How many agent steps are allowed before it must answer.")
+        self.tip.bind(self.entries["max_iterations"], "How many agent steps are allowed before it must answer.")
+        self.entries["max_iterations"].grid(row=4, column=1, sticky="we", padx=(8, 0))
+
+        save = ttk.Button(page, text="Save settings", style="Accent.TButton", command=self._save_settings)
+        self.tip.bind(save, "Write changes to config.json and reload the agent.")
+        save.pack(anchor="nw", pady=(12, 4))
+
+        wh_head = tk.Label(page, text="Web host (optional)", font=("Segoe UI", 10, "bold"), fg=TEXT, bg=BG)
+        wh_sub = tk.Label(page, text="Start the FastAPI server so you can also use Agent Hero in a browser or via its /v1/chat/completions API.",
+                         fg=MUTED, bg=BG, font=("Segoe UI", 9))
+        wh_head.pack(anchor="nw", pady=(16, 2))
+        wh_sub.pack(anchor="nw")
+
+        btns = tk.Frame(page, bg=BG)
+        btns.pack(fill="x", pady=(8, 0))
+        start = ttk.Button(btns, text="Start web host", style="Accent.TButton", command=self._start_web_host)
+        stop = ttk.Button(btns, text="Stop", style="Ghost.TButton", command=self._stop_web_host)
+        self.tip.bind(start, "Run the web UI + API at http://127.0.0.1:8765 in a background thread.")
+        self.tip.bind(stop, "Shut down the web host if it is running.")
+        start.pack(side="left")
+        stop.pack(side="left", padx=(8, 0))
+        self.web_lbl = tk.Label(btns, text="stopped", fg=MUTED, bg=BG, font=("Segoe UI", 9))
+        self.tip.bind(self.web_lbl, "Current state of the web host.")
+        self.web_lbl.pack(side="left")
 
     def _save_settings(self):
-        for key, (sec, k, e) in self.entries.items():
-            v = e.get().strip()
-            try:
-                if k == "max_iterations":
-                    self.cfg[sec][k] = int(v)
-                elif k == "temperature":
-                    self.cfg[sec][k] = float(v)
-                else:
-                    self.cfg[sec][k] = v
-            except ValueError:
-                pass
-        self.cfg.setdefault("version", VERSION)
-        with open(self.cfg_path, "w", encoding="utf-8") as f:
-            json.dump(self.cfg, f, indent=2)
-        self._refresh_status()
+        llm = self.cfg["llm"]
+        llm["base_url"] = self.entries["base_url"].get().strip() or "http://localhost:1234"
+        llm["model"] = self.entries["model"].get().strip() or "local-model"
+        llm["api_key"] = self.entries["api_key"].get().strip()
+        try:
+            llm["timeout_seconds"] = int(self.entries["timeout_seconds"].get())
+        except (TypeError, ValueError):
+            pass
+        agent = self.cfg["agent"]
+        try:
+            agent["max_iterations"] = int(self.entries["max_iterations"].get())
+        except (TypeError, ValueError):
+            pass
+        self._persist()
+        llm_cfg = self.cfg["llm"]
+        self.client = LLMClient(llm_cfg.get("base_url"), llm_cfg.get("model"),
+                               llm_cfg.get("api_key", ""), llm_cfg.get("timeout_seconds", 180))
+        self.registry = PluginRegistry(PLUGINS_DIR, enabled=self.cfg["plugins_enabled"])
+        self.loop = AgentLoop(self.client, self.registry, agent.get("max_iterations", 40))
+        self._update_status()
+        self._check_health()
 
-    def _ping_llm(self):
-        ok = self.llm.ping()
-        self.status_var.set("LLM reachable" if ok else "LLM NOT reachable")
+    def _start_web_host(self):
+        if self.web_server is not None:
+            return
+        try:
+            import uvicorn
+            from agenthero.server import create_app
+        except Exception as exc:
+            self.web_lbl.configure(text=f"web host unavailable: {exc}")
+            return
+        app = create_app()
+        config = uvicorn.Config(app, host="127.0.0.1", port=8765)
+        self.web_server = uvicorn.Server(config)
+        self.web_thread = threading.Thread(target=self.web_server.run, daemon=True)
+        self.web_thread.start()
+        self.web_lbl.configure(text="running at http://127.0.0.1:8765")
 
-    def _host_toggle(self, on: bool):
-        import uvicorn
-        from agenthero.server import build_app
-        if on:
-            app = build_app(self.reg, self.llm, self.cfg)
-            t = threading.Thread(target=uvicorn.run, args=(app,), kwargs={"host": "127.0.0.1", "port": 8765}, daemon=True)
-            t.start()
-            self.host_state["running"] = True
-        else:
-            # uvicorn has no clean stop API; best effort: mark stopped.
-            self.host_state["running"] = False
-        self.sb_host.config(text=f"Web host: {'running on 8765' if self.host_state['running'] else 'stopped'}")
+    def _stop_web_host(self):
+        if self.web_server is not None:
+            self.web_server.should_exit = True
+            self.web_server = None
+            self.web_thread = None
+            self.web_lbl.configure(text="stopped")
 
-    # ---- Plugins tab --------------------------------------------------------
+    # ------------------------------------------------------------- Plugins
     def _build_plugins(self):
-        f = self.content.nametowidget("Plugins")
-        card = self.make_card(f)
-        tk.Label(card, text="Plugins (enable/disable; saved to config.json)", font=("Segoe UI", 10, "bold"), bg=CARD, fg=FG).pack(anchor="nw")
-        self.plugin_rows = {}
-        for name in sorted(self.reg.manifests):
-            m = self.reg.manifests[name]
-            tools = [t["name"] for t in m.get("tools", [])]
-            r = tk.Frame(card, bg=CARD)
-            r.pack(fill="x", pady=4)
-            cb = ttk.Checkbutton(r, text=name)
-            enabled = self.cfg.get("plugins", {}).get(name, True)
-            if enabled:
-                cb.select()
+        page = self.pages["Plugins"][1]
+
+        head = tk.Label(page, text="Plugin control", font=("Segoe UI", 12, "bold"), fg=TEXT, bg=BG)
+        sub = tk.Label(page, text="Toggle plugins on or off \u2014 changes apply to the agent immediately.",
+                       fg=MUTED, bg=BG, font=("Segoe UI", 9))
+        head.pack(anchor="nw")
+        sub.pack(anchor="nw")
+
+        all_reg = PluginRegistry(PLUGINS_DIR, enabled=None)  # full list for display
+        self.plugin_vars = {}
+        for m in all_reg.manifests:
+            name = m.get("name", "")
+            card, row = make_card(page, inner_bg=PANEL)
+            var = tk.BooleanVar(value=bool(self.cfg["plugins_enabled"].get(name, True)))
+            cb = ttk.Checkbutton(row, text=name, variable=var)
+            lab = tk.Label(row, text=m.get("description", "(no description)"),
+                          fg=MUTED, bg=PANEL, font=("Segoe UI", 9), wraplength=460)
+            tools_hint = "Tools: " + "; ".join(
+                f"{t['name']} \u2014 {t['description']}" for t in m.get("tools", []))
+            self.tip.bind(lab, tools_hint)
+            self.tip.bind(cb, f"Enable or disable the {name} plugin for the agent.")
             cb.pack(side="left")
-            tk.Label(r, text=f"{len(tools)} tools: {', '.join(tools)}", font=("Segoe UI", 8), bg=CARD, fg=MUTED).pack(side="right")
-            self.plugin_rows[name] = cb
-            self._tip(cb, f"Toggle plugin '{name}'. Saved when you press Save plugins.")
-        btns = tk.Frame(card, bg=CARD)
-        btns.pack(anchor="nw", pady=(10, 0))
-        b_save = ttk.Button(btns, text="Save plugins", command=self._save_plugins)
-        b_save.pack(side="left")
-        self._tip(b_save, "Persist enabled/disabled state to config.json.")
+            lab.pack(side="left", fill="x", expand=True, padx=(12, 8))
+            var.trace_add("write", lambda *a: self._toggle_plugin(name, bool(var.get())))
+            card.pack(fill="x", pady=3)
 
-    def _save_plugins(self):
-        state = {}
-        for name, cb in self.plugin_rows.items():
-            state[name] = bool(cb.instate())
-        self.cfg.setdefault("plugins", {}).update(state)
-        self.cfg.setdefault("version", VERSION)
-        with open(self.cfg_path, "w", encoding="utf-8") as f:
-            json.dump(self.cfg, f, indent=2)
+    def _toggle_plugin(self, name, enabled):
+        self.cfg["plugins_enabled"][name] = enabled
+        self._persist()
+        self.registry = PluginRegistry(PLUGINS_DIR, enabled=self.cfg["plugins_enabled"])
+        self.loop = AgentLoop(self.client, self.registry,
+                             self.cfg["agent"].get("max_iterations", 40))
+        self._update_status()
 
-    # ---- Folders tab --------------------------------------------------------
+    # ------------------------------------------------------------- Folders
     def _build_folders(self):
-        f = self.content.nametowidget("Folders")
-        card = self.make_card(f)
-        tk.Label(card, text="Allowed roots for file tools", font=("Segoe UI", 10, "bold"), bg=CARD, fg=FG).pack(anchor="nw")
-        lb = tk.Listbox(card, height=8, bg=CARD, fg=FG, relief="flat", bd=0)
-        for r in allowed_roots(self.cfg):
-            lb.insert("end", str(r))
-        lb.pack(fill="x", pady=(6, 8))
+        page = self.pages["Folders"][1]
 
-        row = tk.Frame(card, bg=CARD)
-        row.pack(fill="x")
-        self.new_root = ttk.Entry(row, width=40)
-        self.new_root.pack(side="left")
-        b_add = ttk.Button(row, text="Add folder", command=self._add_folder)
-        b_add.pack(side="left", padx=(8, 8))
-        self._tip(b_add, "Add a folder the file tools may touch.")
-        b_rm = ttk.Button(row, text="Remove selected", command=self._remove_folder)
-        b_rm.pack(side="left")
-        self._tip(b_rm, "Remove the highlighted folder from allowed roots.")
+        head = tk.Label(page, text="Folder sandbox", font=("Segoe UI", 12, "bold"), fg=TEXT, bg=BG)
+        sub = tk.Label(page, text="The agent can only read/write inside these folders. Add or remove them here.",
+                       fg=MUTED, bg=BG, font=("Segoe UI", 9))
+        head.pack(anchor="nw")
+        sub.pack(anchor="nw")
+
+        add = ttk.Button(page, text="Add folder\u2026", style="Accent.TButton", command=self._add_folder)
+        self.tip.bind(add, "Pick a folder to allow the agent to read and write.")
+        add.pack(anchor="nw", pady=(10, 8))
+
+        card, self.roots_frame = make_card(page, inner_bg=PANEL)
+        card.pack(fill="both", expand=True, pady=(0, 8))
+        self._render_roots()
+
+    def _abs_roots(self):
+        return [os.path.abspath(os.path.expanduser(r)) for r in self.cfg["security"]["allowed_roots"]]
+
+    def _render_roots(self):
+        for child in self.roots_frame.winfo_children():
+            child.destroy()
+        for path in self._abs_roots():
+            card, row = make_card(self.roots_frame, inner_bg=CARD)
+            lab = tk.Label(row, text=path, font=("Segoe UI", 9), fg=TEXT, bg=CARD)
+            rem = ttk.Button(row, text="Remove", style="Ghost.TButton",
+                           command=lambda p=path: self._remove_root(p))
+            self.tip.bind(lab, "The agent can read and write inside this folder.")
+            self.tip.bind(rem, "Stop allowing the agent to touch this folder.")
+            lab.pack(side="left")
+            rem.pack(side="right", padx=(0, 8))
+            card.pack(fill="x", pady=2)
 
     def _add_folder(self):
-        p = self.new_root.get().strip()
-        if not p:
+        chosen = filedialog.askdirectory(title="Choose a folder to allow the agent to use")
+        if not chosen:
             return
-        try:
-            Path(p).resolve()
-        except Exception:
-            return
-        roots = self.cfg.setdefault("security", {}).setdefault("allowed_roots", [])
-        if str(Path(p)) not in [str(x) for x in roots]:
-            roots.append(str(Path(p)))
-        lb = None
-        for w in self._walk(self.content.nametowidget("Folders")):
-            if isinstance(w, tk.Listbox):
-                lb = w; break
-        if lb:
-            lb.insert("end", str(Path(p)))
-        self.cfg.setdefault("version", VERSION)
-        with open(self.cfg_path, "w", encoding="utf-8") as f:
-            json.dump(self.cfg, f, indent=2)
+        ap = os.path.abspath(chosen)
+        roots = self.cfg["security"]["allowed_roots"]
+        if ap not in self._abs_roots():
+            roots.append(ap)
+            self._persist()
+        self._render_roots()
 
-    def _remove_folder(self):
-        lb = None
-        for w in self._walk(self.content.nametowidget("Folders")):
-            if isinstance(w, tk.Listbox):
-                lb = w; break
-        if not lb or not lb.selection():
-            return
-        sel = [lb.get(i) for i in lb.selection()]
-        roots = self.cfg.setdefault("security", {}).setdefault("allowed_roots", [])
-        roots[:] = [r for r in roots if str(Path(r)) not in sel]
-        for i in sorted(lb.selection(), reverse=True):
-            lb.delete(i)
-        self.cfg.setdefault("version", VERSION)
-        with open(self.cfg_path, "w", encoding="utf-8") as f:
-            json.dump(self.cfg, f, indent=2)
+    def _remove_root(self, path):
+        abs_roots = self._abs_roots()
+        keep = [r for r in self.cfg["security"]["allowed_roots"]
+               if os.path.abspath(os.path.expanduser(r)) != path]
+        if not keep:
+            keep = ["."]
+        self.cfg["security"]["allowed_roots"] = keep
+        self._persist()
+        self._render_roots()
 
-    def _walk(self, w):
-        yield w
-        for c in w.winfo_children():
-            yield from self._walk(c)
+    # --------------------------------------------------------------- Status
+    def _update_status(self):
+        ok_txt = "reachable" if self.llm_ok else ("unreachable" if self.llm_ok is False else "checking\u2026")
+        web_txt = "running at http://127.0.0.1:8765" if self.web_server else "stopped"
+        self.status_lbl.configure(
+            text=f"v{VERSION}  \u2022  {self.client.base_url} \u2022 {ok_txt}  |  {len(self.registry.plugins)} tools loaded  |  web host: {web_txt}")
 
-    # ---- selftest / smoke ----------------------------------------------------
-    def run_selftest(self) -> int:
-        print(f"{APP_NAME} v{VERSION}")
-        ok = True
-        try:
-            cfg = load_config(self.cfg_path)
-            print("config: OK")
-        except Exception as e:
-            print(f"config: FAIL {e}"); ok = False
-        tools = self.reg.all_tools()
-        print(f"plugins: {len(self.reg.manifests)} loaded, {len(tools)} tools")
-        if not tools:
+    def _check_health(self):
+        def worker():
+            self.llm_ok = self.client.ping()
+        threading.Thread(target=worker, daemon=True).start()
+        self.root.after(2500, lambda: self._update_status())
+
+def selftest():
+    """Headless check: prints version, resolved paths, loaded plugins, and LLM reachability."""
+    print(f"version: {VERSION}")
+    print(f"base_dir: {BASE}")
+    print(f"config.json: {CONFIG_PATH} (exists={os.path.exists(CONFIG_PATH)})")
+    reg = PluginRegistry(PLUGINS_DIR, enabled=None)
+    names = [m.get("name") for m in reg.manifests]
+    print(f"plugins found: {names} ({len(reg.plugins)} tools)")
+    llm = load_config()["llm"]
+    client = LLMClient(llm.get("base_url"), llm.get("model"),
+                       llm.get("api_key", ""), llm.get("timeout_seconds", 180))
+    print(f"LLM ping {client.base_url}: {client.ping()}")
+
+def smoke():
+    """Headless UI check: builds the full GUI (hidden) and verifies every page has content."""
+    root = tk.Tk()
+    root.withdraw()
+    app = App(root)
+    ok = True
+    for name, (btn, page) in app.pages.items():
+        n = len(page.winfo_children())
+        print(f"page {name}: {n} widgets")
+        if n == 0:
             ok = False
-        ping = self.llm.ping()
-        print(f"llm reachable: {ping}")
-        return 0 if ok else 1
+    print("status bar:", repr(app.status_lbl.cget("text")))
+    root.destroy()
+    return 0 if ok else 1
 
-    def run_smoke(self) -> int:
-        # Build the full UI hidden, verify every panel has widgets.
-        try:
-            app = App()
-            for tab in ("Chat", "Settings", "Plugins", "Folders"):
-                f = app.content.nametowidget(tab)
-                n = len(f.winfo_children())
-                print(f"tab {tab}: {n} widgets")
-                if n == 0:
-                    return 1
-            app.root.withdraw()
-            app.root.destroy()
-            return 0
-        except Exception as e:
-            print(f"smoke FAIL: {e}")
-            return 1
-
-
-def main() -> None:
-    if len(sys.argv) > 1 and sys.argv[1] == "--selftest":
-        App().run_selftest()
-        return
-    if len(sys.argv) > 1 and sys.argv[1] == "--smoke":
-        raise SystemExit(App().run_smoke())
-    App().root.mainloop()
-
+def main():
+    root = tk.Tk()
+    App(root)
+    root.mainloop()
 
 if __name__ == "__main__":
-    main()
+    if "--selftest" in sys.argv[1:]:
+        selftest()
+    elif "--smoke" in sys.argv[1:]:
+        raise SystemExit(smoke())
+    else:
+        main()
