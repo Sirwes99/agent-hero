@@ -1,0 +1,16 @@
+{
+  "name": "coderunner",
+  "description": "Execute Python code snippets or existing scripts and capture their output.",
+  "tools": [
+    {
+      "name": "run_python",
+      "description": "Run a Python code snippet in an isolated temp file. Returns stdout/stderr/exit code.",
+      "parameters": {"type": "object", "properties": {"code": {"type": "string"}}, "required": ["code"]}
+    },
+    {
+      "name": "run_script",
+      "description": "Run an existing script file with python (or a given interpreter such as node).",
+      "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "interpreter": {"type": "string"}}, "required": ["path"]}
+    }
+  ]
+}
