@@ -1,0 +1,29 @@
+{
+  "name": "downloads",
+  "description": "Download files from URLs, install packages (pip/npm/winget), and search package registries.",
+  "tools": [
+    {
+      "name": "download_file",
+      "description": "Download a URL to a file. Default destination: downloads/<filename> in the workspace.",
+      "parameters": {"type": "object", "properties": {"url": {"type": "string"}, "dest": {"type": "string"}}, "required": ["url"]}
+    },
+    {
+      "name": "install_package",
+      "description": "Install a package with pip, npm or winget. Use when a needed library/tool is missing.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "manager": {"type": "string", "enum": ["pip", "npm", "winget"]},
+          "package": {"type": "string"},
+          "version": {"type": "string"}
+        },
+        "required": ["manager", "package"]
+      }
+    },
+    {
+      "name": "search_packages",
+      "description": "Search PyPI or npm for a package to find the right name/version.",
+      "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "registry": {"type": "string", "enum": ["pypi", "npm"]}}, "required": ["query"]}
+    }
+  ]
+}
