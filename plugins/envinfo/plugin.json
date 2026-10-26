@@ -1,0 +1,11 @@
+{
+  "name": "envinfo",
+  "description": "Inspect the machine: OS, Python version, working directory, disk space.",
+  "tools": [
+    {
+      "name": "get_environment",
+      "description": "Return system and environment facts useful for planning builds.",
+      "parameters": {"type": "object", "properties": {}, "required": []}
+    }
+  ]
+}
