@@ -1,7 +1,9 @@
-# CHANGELOG — Agent Hero
+# Changelog — Agent Hero
 
-## v1.1.0 (2026-10-26)
-Visual depth pass: fake drop-shadow cards on all content boxes (chat prompt/answer/steps, settings grid, plugin rows, folder rows); grey 2px divider lines between top bar / sidebar / content / status bar.
+## v1.1.0
+- Visual depth pass: fake drop-shadow cards on every content box, and grey 2px divider lines between the top bar, sidebar, content area, and status bar.
+- gui/app.py restored in the repo (fixed corrupted blob).
 
-## v1.0.0 (2026-10-25)
-Initial build: local agent host with 7 plugins / 19 tools (coderunner, downloads, envinfo, files, gitops, shell, websearch), Tkinter GUI with left-side nav, tooltips, version stamping; renamed from AgentForge to Agent Hero. Web UI + FastAPI server included.
+## v1.0.0
+- Initial build of Agent Hero (renamed from AgentForge): universal local agent host with a Tkinter GUI — left-side navigation buttons (Chat / Settings / Plugins / Folders), hover tooltips, LLM model control, plugin toggles, folder sandboxing, live status bar, and version stamping in config.json.
+- 7 plugins: coderunner, downloads, envinfo, files, gitops, shell, websearch — the agent can run code, download anything, inspect its environment, read/write files, use Git, run shell commands, search the web, and fetch any URL.
