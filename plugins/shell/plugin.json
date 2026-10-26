@@ -1,0 +1,20 @@
+{
+  "name": "shell",
+  "description": "Execute commands in PowerShell or cmd on Windows.",
+  "tools": [
+    {
+      "name": "run_command",
+      "description": "Run a shell command and return exit code, stdout and stderr. Use for builds, installs, system tasks, running tests.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "command": {"type": "string", "description": "Command line to execute"},
+          "shell": {"type": "string", "enum": ["powershell", "cmd"], "description": "Which shell to use (default: powershell)"},
+          "cwd": {"type": "string", "description": "Working directory (must be inside allowed roots)"},
+          "timeout": {"type": "integer", "description": "Max seconds to wait (default 120)"}
+        },
+        "required": ["command"]
+      }
+    }
+  ]
+}
