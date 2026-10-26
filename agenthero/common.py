@@ -1,33 +1,38 @@
-"""Shared helpers: config, allowed roots, safe path handling."""
+"""Shared helpers for the host and all plugins."""
 import json
-from pathlib import Path
+import os
 
-def load_config(path: Path) -> dict:
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {
-            "llm": {"base_url": "http://localhost:1234", "model": "local-model"},
-            "agent": {"max_iterations": 12, "temperature": 0.2},
-            "security": {"allowed_roots": [str(Path.cwd())]},
-        }
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def allowed_roots(cfg: dict) -> list[Path]:
-    return [Path(r) for r in cfg.get("security", {}).get("allowed_roots", [])]
+def load_config():
+    path = os.path.join(PROJECT_ROOT, "config.json")
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
 
 
-def safe_path(p: str, roots: list[Path]) -> Path | None:
-    """Resolve p; return it only if it is inside one of the allowed roots."""
-    try:
-        cand = (Path(roots[0]) / p).resolve() if not Path(p).is_absolute() else Path(p)
-    except Exception:
-        return None
-    for root in roots:
-        try:
-            cand.relative_to(root.resolve())
-            return cand
-        except ValueError:
-            continue
-    return None
+def allowed_roots(cfg=None):
+    """Absolute paths the agent is allowed to touch."""
+    cfg = cfg or load_config()
+    roots = []
+    for r in cfg.get("security", {}).get("allowed_roots", ["."]):
+        ap = os.path.abspath(os.path.expanduser(r))
+        if ap not in roots:
+            roots.append(ap)
+    return roots
+
+
+def safe_path(p, cfg=None):
+    """Resolve a path and ensure it is inside one of the allowed roots."""
+    ap = os.path.abspath(os.path.expanduser(str(p)))
+    for root in allowed_roots(cfg):
+        if ap == root or ap.startswith(root + os.sep):
+            return ap
+    raise PermissionError(f"Path is outside allowed roots: {ap}")
+
+
+def truncate(text, limit=20000):
+    text = str(text)
+    if len(text) > limit:
+        return text[:limit] + f"\n...[truncated; {len(text)} chars total]"
+    return text
