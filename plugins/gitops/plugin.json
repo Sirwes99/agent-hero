@@ -1,0 +1,11 @@
+{
+  "name": "gitops",
+  "description": "Run git commands (status, log, diff, add, commit, init, branch, clone, pull, push, ...).",
+  "tools": [
+    {
+      "name": "git",
+      "description": "Run a git command. Only common subcommands are allowed for safety.",
+      "parameters": {"type": "object", "properties": {"command": {"type": "string"}, "cwd": {"type": "string"}}, "required": ["command"]}
+    }
+  ]
+}
