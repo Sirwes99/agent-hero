@@ -1,1 +1,67 @@
-"<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>Agent Hero \u2014 universal local agent host</title>\n<style>\n  :root { color-scheme: dark; }\n  body { font-family: \"Segoe UI\", system-ui, sans-serif; background: #0f172a; color: #e2e8f0; margin: 0; }\n  .wrap { max-width: 960px; margin: 24px auto; padding: 0 16px; }\n  h1 { font-size: 22px; margin-bottom: 4px; }\n  .sub { color: #94a3b8; font-size: 14px; margin-bottom: 16px; }\n  textarea { width: 100%; box-sizing: border-box; min-height: 110px; background: #1e293b; color: #e2e8f0;\n           border: 1px solid #334155; border-radius: 8px; padding: 10px; font-size: 14px; resize: vertical; }\n  button { margin-top: 10px; background: #2563eb; color: white; border: 0; border-radius: 8px;\n           padding: 10px 18px; font-size: 14px; cursor: pointer; }\n  button:disabled { opacity: .5; }\n  .answer { margin-top: 16px; background: #1e293b; border: 1px solid #334155; border-radius: 8px;\n            padding: 12px; white-space: pre-wrap; font-size: 14px; }\n  .trace { margin-top: 16px; }\n  .step { background: #172033; border-left: 3px solid #38bdf8; border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; font-size: 12.5px; }\n  .step b { color: #7dd3fc; }\n  .meta { color: #64748b; font-size: 12px; margin-top: 12px; }\n</style>\n</head>\n<body>\n<div class=\"wrap\">\n  <h1>Agent Hero</h1>\n  <div class=\"sub\">Give your local AI a full toolbox: shell, files, web search, downloads/installs, code runner, git.</div>\n\n  <textarea id=\"prompt\" placeholder='e.g. \"Build a Python CLI tool that converts CSV to JSON and test it\"'></textarea>\n  <button id=\"go\">Run agent</button>\n\n  <div class=\"answer\" id=\"answer\"></div>\n  <div class=\"trace\" id=\"trace\"></div>\n  <div class=\"meta\" id=\"meta\"></div>\n</div>\n\n<script>\nconst btn = document.getElementById(\"go\");\nbtn.onclick = async () => {\n  const prompt = document.getElementById(\"prompt\").value.trim();\n  if (!prompt) return;\n  btn.disabled = true;\n  document.getElementById(\"answer\").textContent = \"Working\u2026\";\n  document.getElementById(\"trace\").innerHTML = \"\";\n  try {\n    const r = await fetch(\"/agent/run\", {\n      method: \"POST\",\n      headers: { \"Content-Type\": \"application/json\" },\n      body: JSON.stringify({ prompt })\n    });\n    const data = await r.json();\n    document.getElementById(\"answer\").textContent = data.final_answer || \"(no answer)\";\n    document.getElementById(\"trace\").innerHTML = (data.trace || []).map(t => {\n      const args = JSON.stringify(t.args).slice(0, 160);\n      return `<div class=\"step\"><b>${t.tool}</b> ${args}<br><span>${String(t.result).slice(0, 400)}</span></div>`;\n    }).join(\"\");\n    document.getElementById(\"meta\").textContent = `steps: ${data.steps}`;\n  } catch (e) {\n    document.getElementById(\"answer\").textContent = \"Error: \" + e.message;\n  } finally {\n    btn.disabled = false;\n  }\n};\n</script>\n</body>\n</html>\n"
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Agent Hero — universal local agent host</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font-family: "Segoe UI", system-ui, sans-serif; background: #0f172a; color: #e2e8f0; margin: 0; }
+  .wrap { max-width: 960px; margin: 24px auto; padding: 0 16px; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .sub { color: #94a3b8; font-size: 14px; margin-bottom: 16px; }
+  textarea { width: 100%; box-sizing: border-box; min-height: 110px; background: #1e293b; color: #e2e8f0;
+           border: 1px solid #334155; border-radius: 8px; padding: 10px; font-size: 14px; resize: vertical; }
+  button { margin-top: 10px; background: #2563eb; color: white; border: 0; border-radius: 8px;
+           padding: 10px 18px; font-size: 14px; cursor: pointer; }
+  button:disabled { opacity: .5; }
+  .answer { margin-top: 16px; background: #1e293b; border: 1px solid #334155; border-radius: 8px;
+            padding: 12px; white-space: pre-wrap; font-size: 14px; }
+  .trace { margin-top: 16px; }
+  .step { background: #172033; border-left: 3px solid #38bdf8; border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; font-size: 12.5px; }
+  .step b { color: #7dd3fc; }
+  .meta { color: #64748b; font-size: 12px; margin-top: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Agent Hero</h1>
+  <div class="sub">Give your local AI a full toolbox: shell, files, web search, downloads/installs, code runner, git.</div>
+
+  <textarea id="prompt" placeholder='e.g. "Build a Python CLI tool that converts CSV to JSON and test it"'></textarea>
+  <button id="go">Run agent</button>
+
+  <div class="answer" id="answer"></div>
+  <div class="trace" id="trace"></div>
+  <div class="meta" id="meta"></div>
+</div>
+
+<script>
+const btn = document.getElementById("go");
+btn.onclick = async () => {
+  const prompt = document.getElementById("prompt").value.trim();
+  if (!prompt) return;
+  btn.disabled = true;
+  document.getElementById("answer").textContent = "Working…";
+  document.getElementById("trace").innerHTML = "";
+  try {
+    const r = await fetch("/agent/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt })
+    });
+    const data = await r.json();
+    document.getElementById("answer").textContent = data.final_answer || "(no answer)";
+    document.getElementById("trace").innerHTML = (data.trace || []).map(t => {
+      const args = JSON.stringify(t.args).slice(0, 160);
+      return `<div class="step"><b>${t.tool}</b> ${args}<br><span>${String(t.result).slice(0, 400)}</span></div>`;
+    }).join("");
+    document.getElementById("meta").textContent = `steps: ${data.steps}`;
+  } catch (e) {
+    document.getElementById("answer").textContent = "Error: " + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+};
+</script>
+</body>
+</html>
