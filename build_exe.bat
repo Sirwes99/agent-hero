@@ -2,7 +2,7 @@
 setlocal
 rem ------------------------------------------------------------------
 rem Agent Hero GUI - PyInstaller build script
-rem Run from the agentforge folder (the one containing gui\app.py and plugins\)
+rem Run from the agenthero folder (the one containing gui\app.py and plugins\)
 rem Output: dist\agent_hero\agent_hero.exe
 rem ------------------------------------------------------------------
 
