@@ -9,10 +9,11 @@ import json
 import os
 import sys
 import threading
+import time
 import tkinter as tk
 from tkinter import filedialog, ttk
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 
 def base_dir():
@@ -25,6 +26,7 @@ def base_dir():
 sys.path.insert(0, base_dir())  # make the agenthero package importable when run from source
 
 from agenthero.agent_loop import AgentLoop
+from agenthero.common import gpu_stats
 from agenthero.llm_client import LLMClient
 from agenthero.registry import PluginRegistry
 
@@ -42,6 +44,14 @@ TEXT = "#e6e9f0"
 MUTED = "#9aa3b8"
 SHADOW = "#0c0f16"   # fake drop-shadow color (darker than BG)
 EDGE = "#3d4763"     # grey outline between panes and card rings
+
+# Quick model-mode presets: temperature + reasoning_effort sent with each chat.
+MODES = {
+    "Balanced": {"temperature": 0.7, "reasoning_effort": "low"},
+    "Precise": {"temperature": 0.2, "reasoning_effort": "none"},
+    "Creative": {"temperature": 1.0, "reasoning_effort": "low"},
+    "Thinking": {"temperature": 0.4, "reasoning_effort": "high"},
+}
 
 
 def make_card(parent, inner_bg=CARD):
@@ -65,8 +75,10 @@ def load_config():
     llm.setdefault("model", "local-model")
     llm.setdefault("api_key", "")
     llm.setdefault("timeout_seconds", 180)
+    llm.setdefault("mode", "Balanced")
     agent = cfg.setdefault("agent", {})
     agent.setdefault("max_iterations", 40)
+    agent.setdefault("overall_timeout_seconds", 900)
     agent.setdefault("system_prompt", "")
     sec = cfg.setdefault("security", {})
     sec.setdefault("allowed_roots", ["."])
@@ -162,8 +174,14 @@ class App:
                              self.cfg["agent"].get("max_iterations", 40))
 
         self.busy = False
+        self.cancel_requested = False
+        self.run_started = 0.0
+        self.overall_limit = int(self.cfg["agent"].get("overall_timeout_seconds", 900))
         self.result = None
         self.llm_ok = None
+        self.gpu = None
+        self.last_stats = None
+        self._health_scheduled = False
         self.web_server = None
         self.web_thread = None
 
@@ -184,9 +202,12 @@ class App:
         bar.pack(side="bottom", fill="x")
         div_bar = tk.Frame(root, bg=EDGE, height=2)
         div_bar.pack(side="bottom")
+        self.status_btn = ttk.Button(bar, text="Status", style="Ghost.TButton", command=self._refresh_status)
+        self.tip.bind(self.status_btn, "Refresh live status now: LLM ping, GPU VRAM usage, last run speed.")
         self.status_lbl = tk.Label(bar, text="", fg=MUTED, bg=PANEL, font=("Segoe UI", 9), padx=12)
-        self.tip.bind(self.status_lbl, "Live status: LLM reachability, loaded tools, web host state.")
+        self.tip.bind(self.status_lbl, "Live status: LLM reachability, loaded tools, web host state, VRAM.")
         self.status_lbl.pack(side="right")
+        self.status_btn.pack(side="right", padx=(0, 12))
 
         # Main area: left sidebar navigation + content on the right
         main = tk.Frame(root, bg=BG)
@@ -257,9 +278,24 @@ class App:
                              font=("Consolas", 11), padx=9, pady=9)
         self.tip.bind(self.prompt, "Type the task here. Example: 'Build a Python CLI that converts CSV to JSON and test it'")
         self.prompt.pack(side="left", fill="both", expand=True)
+
         run = ttk.Button(row, text="Run agent", style="Accent.TButton", command=self._run_agent)
         self.tip.bind(run, "Send the task to your local model. Tool steps appear below.")
         run.pack(side="right")
+
+        self.cancel_btn = ttk.Button(row, text="Cancel", style="Ghost.TButton", state="disabled",
+                                     command=self._cancel_run)
+        self.tip.bind(self.cancel_btn, "Abort the current run (waits for the in-flight step to finish).")
+        self.cancel_btn.pack(side="right", padx=(8, 0))
+
+        mode_lbl = tk.Label(row, text="Mode", fg=MUTED, bg=BG, font=("Segoe UI", 9))
+        self.tip.bind(mode_lbl, "Quick model-mode preset: sets temperature and thinking effort for each run.")
+        self.mode_combo = ttk.Combobox(row, values=list(MODES), width=10)
+        self.mode_combo.set(self.cfg["llm"].get("mode", "Balanced"))
+        self.tip.bind(self.mode_combo, "Balanced 0.7/low • Precise 0.2/none • Creative 1.0/low • Thinking 0.4/high")
+        self.mode_combo.pack(side="right", padx=(8, 0))
+        mode_lbl.pack(side="right")
+        self.mode_combo.bind("<<ComboboxSelected>>", lambda e: self._set_mode(self.mode_combo.get()))
 
         ans_head = tk.Label(page, text="Final answer", font=("Segoe UI", 10, "bold"), fg=TEXT, bg=BG)
         ans_head.pack(anchor="nw", pady=(14, 2))
@@ -281,19 +317,39 @@ class App:
         if not prompt or self.busy:
             return
         self.busy = True
+        self.cancel_requested = False
+        self.run_started = time.time()
         self.result = None
         self._set_steps([])
-        self.status_lbl.configure(text="Working…")
+        self.status_lbl.configure(text=f"Working… 0s (limit {self.overall_limit}s)")
+        self.cancel_btn.configure(state="normal")
 
         def worker():
             try:
-                self.result = self.loop.run([{"role": "user", "content": prompt}])
+                self.result = self.loop.run(
+                    [{"role": "user", "content": prompt}],
+                    extra=MODES.get(self.cfg["llm"].get("mode", "Balanced")),
+                    overall_timeout=self.overall_limit,
+                )
             except Exception as exc:
-                self.result = {"final_answer": f"ERROR: {exc}", "steps": 0, "trace": []}
+                self.result = {"final_answer": f"ERROR: {exc}", "steps": 0, "trace": [], "stats": None}
+            if self.cancel_requested and not str(self.result.get("final_answer", "")).startswith("(run cancelled)"):
+                self.result["final_answer"] = "(run cancelled)"
             self.busy = False
 
         threading.Thread(target=worker, daemon=True).start()
         self.root.after(250, self._poll)
+
+    def _cancel_run(self):
+        if not self.busy:
+            return
+        self.cancel_requested = True
+        self.status_lbl.configure(text="Cancelling…")
+
+    def _set_mode(self, name):
+        if name in MODES:
+            self.cfg["llm"]["mode"] = name
+            self._persist()
 
     def _poll(self):
         if not self.busy and self.result is not None:
@@ -302,8 +358,20 @@ class App:
             self.answer.insert("1.0", self.result["final_answer"])
             self.answer.configure(state="disabled")
             self._set_steps(self.result.get("trace", []))
-            self.status_lbl.configure(text=f"Done — {self.result['steps']} step(s).")
+            stats = self.result.get("stats") or {}
+            tok = stats.get("tok_per_s")
+            if tok:
+                self.last_stats = stats
+                self.status_lbl.configure(text=f"Done — {self.result['steps']} step(s) • ~{tok:.1f} tok/s")
+            else:
+                self.status_lbl.configure(text=f"Done — {self.result['steps']} step(s).")
+            self.cancel_btn.configure(state="disabled")
             return
+        if self.busy:
+            elapsed = int(time.time() - self.run_started)
+            self.status_lbl.configure(
+                text=(f"Working… {elapsed}s (limit {self.overall_limit}s)"
+                      if not self.cancel_requested else "Cancelling…"))
         self.root.after(250, self._poll)
 
     def _set_steps(self, trace):
@@ -370,6 +438,14 @@ class App:
         self.tip.bind(self.entries["max_iterations"], "How many agent steps are allowed before it must answer.")
         self.entries["max_iterations"].grid(row=4, column=1, sticky="we", padx=(8, 0))
 
+        lab = tk.Label(grid, text="Run limit (s)", font=("Segoe UI", 9), fg=MUTED, bg=PANEL)
+        lab.grid(row=5, column=0, sticky="w")
+        self.entries["overall_timeout_seconds"] = ttk.Spinbox(grid, from_=60, to=3600)
+        self.entries["overall_timeout_seconds"].insert(0, str(self.cfg["agent"]["overall_timeout_seconds"]))
+        self.tip.bind(lab, "Hard wall-clock limit for one agent run; each step's request timeout shrinks as the deadline nears.")
+        self.tip.bind(self.entries["overall_timeout_seconds"], "Hard wall-clock limit for one agent run (default 900 s).")
+        self.entries["overall_timeout_seconds"].grid(row=5, column=1, sticky="we", padx=(8, 0))
+
         save = ttk.Button(page, text="Save settings", style="Accent.TButton", command=self._save_settings)
         self.tip.bind(save, "Write changes to config.json and reload the agent.")
         save.pack(anchor="nw", pady=(12, 4))
@@ -406,14 +482,19 @@ class App:
             agent["max_iterations"] = int(self.entries["max_iterations"].get())
         except (TypeError, ValueError):
             pass
+        try:
+            agent["overall_timeout_seconds"] = int(self.entries["overall_timeout_seconds"].get())
+        except (TypeError, ValueError):
+            pass
+        self.overall_limit = int(agent.get("overall_timeout_seconds", 900))
         self._persist()
         llm_cfg = self.cfg["llm"]
         self.client = LLMClient(llm_cfg.get("base_url"), llm_cfg.get("model"),
                                llm_cfg.get("api_key", ""), llm_cfg.get("timeout_seconds", 180))
         self.registry = PluginRegistry(PLUGINS_DIR, enabled=self.cfg["plugins_enabled"])
         self.loop = AgentLoop(self.client, self.registry, agent.get("max_iterations", 40))
+        self.overall_limit = int(agent.get("overall_timeout_seconds", 900))
         self._update_status()
-        self._check_health()
 
     def _start_web_host(self):
         if self.web_server is not None:
@@ -486,14 +567,43 @@ class App:
 
         add = ttk.Button(page, text="Add folder…", style="Accent.TButton", command=self._add_folder)
         self.tip.bind(add, "Pick a folder to allow the agent to read and write.")
-        add.pack(anchor="nw", pady=(10, 8))
+        add.pack(anchor="nw", pady=(10, 2))
+        self.folder_note = tk.Label(page, text="", fg=MUTED, bg=BG, font=("Segoe UI", 9))
+        self.tip.bind(self.folder_note, "Result of the last add/remove action.")
+        self.folder_note.pack(anchor="nw")
 
         card, self.roots_frame = make_card(page, inner_bg=PANEL)
-        card.pack(fill="both", expand=True, pady=(0, 8))
+        card.pack(fill="x", pady=(8, 4))
         self._render_roots()
 
+        bcard, bbody = make_card(page, inner_bg=PANEL)
+        bcard.pack(fill="x", pady=(0, 4))
+        browse_lbl = tk.Label(bbody, text="Browse an allowed folder:", fg=MUTED, bg=PANEL, font=("Segoe UI", 9))
+        self.tip.bind(browse_lbl, "Pick one of the allowed folders to preview its top-level contents.")
+        self.root_combo = ttk.Combobox(bbody, values=self._abs_roots())
+        self.tip.bind(self.root_combo, "Allowed folders — pick one to list its contents below.")
+        show_btn = ttk.Button(bbody, text="Show contents", style="Ghost.TButton", command=self._show_contents)
+        self.tip.bind(show_btn, "List the top-level files and subfolders of the selected folder (read-only).")
+        browse_lbl.pack(side="left")
+        self.root_combo.pack(side="left", fill="x", expand=True, padx=(8, 0))
+        show_btn.pack(side="right")
+
+        lcard, lbody = make_card(page, inner_bg=CARD)
+        lcard.pack(fill="both", expand=True, pady=(0, 8))
+        self.contents_list = tk.Listbox(lbody, height=12, bg=CARD, fg=TEXT, relief="flat", bd=0)
+        self.tip.bind(self.contents_list, "Top-level contents of the selected allowed folder (read-only preview).")
+        self.contents_list.pack(fill="both", expand=True)
+
+    def _norm_root(self, p):
+        return os.path.normpath(os.path.abspath(os.path.expanduser(str(p))))
+
     def _abs_roots(self):
-        return [os.path.abspath(os.path.expanduser(r)) for r in self.cfg["security"]["allowed_roots"]]
+        seen = []
+        for r in self.cfg["security"]["allowed_roots"]:
+            ap = self._norm_root(r)
+            if all(os.path.normcase(x) != os.path.normcase(ap) for x in seen):
+                seen.append(ap)
+        return seen
 
     def _render_roots(self):
         for child in self.roots_frame.winfo_children():
@@ -512,36 +622,100 @@ class App:
     def _add_folder(self):
         chosen = filedialog.askdirectory(title="Choose a folder to allow the agent to use")
         if not chosen:
+            self.folder_note.configure(text="No folder selected.")
             return
-        ap = os.path.abspath(chosen)
-        roots = self.cfg["security"]["allowed_roots"]
-        if ap not in self._abs_roots():
-            roots.append(ap)
+        ap = self._norm_root(chosen)
+        existing = {os.path.normcase(x) for x in self._abs_roots()}
+        if os.path.normcase(ap) in existing:
+            self.folder_note.configure(text=f"Already allowed: {ap}")
+        else:
+            self.cfg["security"]["allowed_roots"].append(ap)
             self._persist()
+            self.folder_note.configure(text=f"Added: {ap}")
+        self.root_combo.configure(values=self._abs_roots())
         self._render_roots()
 
     def _remove_root(self, path):
-        abs_roots = self._abs_roots()
         keep = [r for r in self.cfg["security"]["allowed_roots"]
-               if os.path.abspath(os.path.expanduser(r)) != path]
+               if os.path.normcase(self._norm_root(r)) != os.path.normcase(path)]
         if not keep:
             keep = ["."]
         self.cfg["security"]["allowed_roots"] = keep
         self._persist()
+        self.folder_note.configure(text=f"Removed: {path}")
+        self.root_combo.configure(values=self._abs_roots())
         self._render_roots()
 
+    def _clear_list(self):
+        try:
+            self.contents_list.delete(0, "end")
+        except tk.TclError:
+            pass
+
+    def _show_contents(self):
+        root = self.root_combo.get().strip()
+        allowed = {os.path.normcase(x) for x in self._abs_roots()}
+        if not root or os.path.normcase(root) not in allowed:
+            self._clear_list()
+            return
+        try:
+            entries = sorted(os.listdir(root), key=str.lower)
+        except OSError as e:
+            self._clear_list()
+            self.contents_list.insert("end", f"ERROR: {e}")
+            return
+        lines = []
+        for name in entries[:300]:
+            full = os.path.join(root, name)
+            if os.path.isdir(full):
+                lines.append(f"{name}/  [folder]")
+            else:
+                try:
+                    size = os.path.getsize(full)
+                    human = f"{size / 1048576:.2f} MB" if size >= 1048576 else f"{size} B"
+                except OSError:
+                    human = "?"
+                lines.append(f"{name}  file — {human}")
+        if len(entries) > 300:
+            lines.append(f"... and {len(entries) - 300} more entries")
+        self._clear_list()
+        for ln in lines:
+            self.contents_list.insert("end", ln)
+
     # --------------------------------------------------------------- Status
-    def _update_status(self):
+    def _status_text(self):
         ok_txt = "reachable" if self.llm_ok else ("unreachable" if self.llm_ok is False else "checking…")
         web_txt = "running at http://127.0.0.1:8765" if self.web_server else "stopped"
-        self.status_lbl.configure(
-            text=f"v{VERSION}  •  {self.client.base_url} • {ok_txt}  |  {len(self.registry.plugins)} tools loaded  |  web host: {web_txt}")
+        gpu_txt = ""
+        if self.gpu:
+            g = self.gpu[0]
+            gpu_txt = f"  |  VRAM {g['used_mib']}/{g['total_mib']} MiB ({g['util_pct']:.0f}%)"
+        tok = (self.last_stats or {}).get("tok_per_s")
+        tok_txt = f"  |  last run ~{tok:.1f} tok/s" if tok else ""
+        return (f"v{VERSION} • {self.client.base_url} {ok_txt}  |  "
+                f"{len(self.registry.plugins)} tools  |  web host: {web_txt}{gpu_txt}{tok_txt}")
 
-    def _check_health(self):
+    def _update_status(self):
+        self.status_lbl.configure(text=self._status_text())
+
+    def _refresh_status(self):
+        """Status callout button: immediate LLM ping + GPU VRAM refresh."""
         def worker():
             self.llm_ok = self.client.ping()
+            self.gpu = gpu_stats()
+            self._update_status()
         threading.Thread(target=worker, daemon=True).start()
-        self.root.after(2500, lambda: self._update_status())
+
+    def _check_health(self):
+        """Periodic background health: LLM ping + VRAM every ~10 s."""
+        if getattr(self, "_health_scheduled", False):
+            return
+        self._health_scheduled = True
+        def worker():
+            self.llm_ok = self.client.ping()
+            self.gpu = gpu_stats()
+        threading.Thread(target=worker, daemon=True).start()
+        self.root.after(10000, lambda: (self._update_status(), self._check_health()))
 
 
 def selftest():
