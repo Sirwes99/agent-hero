@@ -13,7 +13,7 @@ import time
 import tkinter as tk
 from tkinter import filedialog, ttk
 
-VERSION = "1.2.2"
+VERSION = "1.2.3"
 
 
 def base_dir():

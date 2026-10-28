@@ -6,7 +6,12 @@ import requests
 
 class LLMClient:
     def __init__(self, base_url="http://localhost:1234", model="local-model", api_key="", timeout=180):
-        self.base_url = str(base_url).rstrip("/")
+        # Accept both a bare server root (http://host:port) and one that already
+        # ends in /v1; normalize so we always append /v1/... exactly once.
+        base = str(base_url).rstrip("/")
+        if base.endswith("/v1"):
+            base = base[: -3]
+        self.base_url = base.rstrip("/")
         self.model = model
         self.api_key = api_key or ""
         self.timeout = int(timeout)

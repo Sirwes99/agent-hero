@@ -1,5 +1,12 @@
 # Agent Hero — Changelog
 
+## v1.2.3 (2026-10-28)
+
+Fixes for the two bugs found while testing v1.2.2:
+
+1. **Doubled `/v1` endpoint fixed** — `LLMClient` now normalizes the configured base URL: a server root that already ends in `/v1` (e.g. `http://localhost:1235/v1`) has that suffix stripped before requests are built, so chat and health-check URLs are always exactly `{root}/v1/...`. Both bare-host (`http://host:port`) and full-`/v1` configs work; the "Unexpected endpoint or method (POST /v1/v1/chat/completions)" error is gone.
+2. **New tasks always start after any run** — re-verified end-to-end that a failed run resets state (`busy=False`, status shows Done, answer box holds the ERROR text) and the next Run agent starts normally; the watchdog + per-run sequence guard remain in place so no outcome can leave the GUI stuck.
+
 ## v1.2.2 (2026-10-28)
 
 Fixes for the two bugs found while testing v1.2.1:
