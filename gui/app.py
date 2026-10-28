@@ -13,7 +13,7 @@ import time
 import tkinter as tk
 from tkinter import filedialog, ttk
 
-VERSION = "1.2.1"
+VERSION = "1.2.2"
 
 
 def base_dir():
@@ -324,6 +324,9 @@ class App:
         self._set_steps([])
         self.status_lbl.configure(text=f"Working… 0s (limit {self.overall_limit}s)")
         self.cancel_btn.configure(state="normal")
+        # Ensure the poll loop is running for this run (it stops after a
+        # completed run, so it must be re-armed on every new start).
+        self.root.after(250, self._poll)
 
         self._run_seq += 1
         my_run = self._run_seq
@@ -374,6 +377,9 @@ class App:
             self._persist()
 
     def _poll(self):
+        if getattr(self, "_status_refresh_requested", False):
+            self._status_refresh_requested = False
+            self._update_status()
         # Defensive reads: a malformed result must never crash the poll chain.
         res = self.result or {}
         if not self.busy and self.result is not None:
@@ -724,6 +730,8 @@ class App:
                 f"{len(self.registry.plugins)} tools  |  web host: {web_txt}{gpu_txt}{tok_txt}")
 
     def _update_status(self):
+        if self.busy:
+            return  # Don't clobber the live run status ("Working… Ns").
         self.status_lbl.configure(text=self._status_text())
 
     def _refresh_status(self):
@@ -731,8 +739,9 @@ class App:
         def worker():
             self.llm_ok = self.client.ping()
             self.gpu = gpu_stats()
-            # Tkinter is not thread-safe: hop back to the main thread for widget updates.
-            self.root.after(0, self._update_status)
+            # Tkinter is not thread-safe: never touch widgets (or even root.after)
+            # from this thread. Flag it; the main-thread poll picks it up.
+            self._status_refresh_requested = True
         threading.Thread(target=worker, daemon=True).start()
 
     def _check_health(self):

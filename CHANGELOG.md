@@ -1,6 +1,11 @@
 # Agent Hero — Changelog
 
-## v1.2.1 (2026-10-28)
+## v1.2.2 (2026-10-28)
+
+Fixes for the two bugs found while testing v1.2.1:
+
+1. **Status bar updates live on every run** — the 250 ms `_poll` loop is re-armed each time Run agent starts, so "Working… Ns" ticks up in real time and "Done — N step(s)" appears when a run completes (previously it stayed frozen at "Working… 0s"). The periodic health summary no longer overwrites the live run status.
+2. **Input registers reliably** — the Status button's worker thread no longer calls Tk (`root.after`) from off-thread; it sets a flag that `_poll` picks up on the main thread, eliminating the Tcl event-loop desync that made clicks register only in bursts.
 
 Fixes for the two post-test bugs in v1.2.0:
 
