@@ -23,10 +23,14 @@ class AgentLoop:
         self.registry = registry
         self.max_iterations = int(max_iterations)
 
-    def run(self, messages, system_prompt=None, extra=None, overall_timeout=None):
+    def run(self, messages, system_prompt=None, extra=None, overall_timeout=None,
+            cancel_check=None):
         """Run the loop. `extra` is merged into each chat payload (mode presets).
         `overall_timeout` caps total wall time; per-step request timeouts shrink as
-        the deadline approaches so a hung server can never stall the run forever."""
+        the deadline approaches so a hung server can never stall the run forever.
+        `cancel_check`, if given, is polled before every step; when it returns True
+        the loop stops and reports "(run cancelled)" (the in-flight step finishes
+        first)."""
         msgs = [dict(m) for m in messages]
         if not any(m.get("role") == "system" for m in msgs):
             msgs.insert(0, {"role": "system", "content": system_prompt or DEFAULT_SYSTEM_PROMPT})
@@ -44,6 +48,14 @@ class AgentLoop:
                 stats["elapsed_s"] = time.time() - start
                 return {
                     "final_answer": f"Timed out after {int(overall_timeout)}s without a final answer.",
+                    "steps": step - 1,
+                    "trace": trace,
+                    "stats": self._finalize_stats(stats),
+                }
+            if cancel_check and cancel_check():
+                stats["elapsed_s"] = time.time() - start
+                return {
+                    "final_answer": "(run cancelled)",
                     "steps": step - 1,
                     "trace": trace,
                     "stats": self._finalize_stats(stats),

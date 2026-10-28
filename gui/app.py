@@ -13,7 +13,7 @@ import time
 import tkinter as tk
 from tkinter import filedialog, ttk
 
-VERSION = "1.2.0"
+VERSION = "1.2.1"
 
 
 def base_dir():
@@ -176,6 +176,7 @@ class App:
         self.busy = False
         self.cancel_requested = False
         self.run_started = 0.0
+        self._run_seq = 0
         self.overall_limit = int(self.cfg["agent"].get("overall_timeout_seconds", 900))
         self.result = None
         self.llm_ok = None
@@ -324,20 +325,41 @@ class App:
         self.status_lbl.configure(text=f"Working… 0s (limit {self.overall_limit}s)")
         self.cancel_btn.configure(state="normal")
 
+        self._run_seq += 1
+        my_run = self._run_seq
+
         def worker():
             try:
                 self.result = self.loop.run(
                     [{"role": "user", "content": prompt}],
                     extra=MODES.get(self.cfg["llm"].get("mode", "Balanced")),
                     overall_timeout=self.overall_limit,
+                    cancel_check=lambda: self.cancel_requested,
                 )
             except Exception as exc:
                 self.result = {"final_answer": f"ERROR: {exc}", "steps": 0, "trace": [], "stats": None}
-            if self.cancel_requested and not str(self.result.get("final_answer", "")).startswith("(run cancelled)"):
-                self.result["final_answer"] = "(run cancelled)"
-            self.busy = False
+            finally:
+                # Release the UI only if this worker is still the active run.
+                # A late-finishing hung worker must not clobber state that a
+                # watchdog reset or a newer run has already taken over.
+                if my_run == self._run_seq and self.busy:
+                    self.busy = False
 
         threading.Thread(target=worker, daemon=True).start()
+        # Watchdog: if the worker ever hangs past the run limit + margin, force-
+        # reset state so the GUI is never permanently stuck.
+        self.root.after((self.overall_limit + 1800) * 1000, self._watchdog)
+
+    def _watchdog(self):
+        if not self.busy:
+            return
+        elapsed = int(time.time() - self.run_started)
+        self.result = {
+            "final_answer": (f"ERROR: run stalled after {elapsed}s (limit {self.overall_limit}s). "
+                            f"State reset — you can issue a new task now."),
+            "steps": 0, "trace": [], "stats": None,
+        }
+        self.busy = False
         self.root.after(250, self._poll)
 
     def _cancel_run(self):
@@ -352,19 +374,23 @@ class App:
             self._persist()
 
     def _poll(self):
+        # Defensive reads: a malformed result must never crash the poll chain.
+        res = self.result or {}
         if not self.busy and self.result is not None:
+            final = str(res.get("final_answer", ""))
+            steps_n = int(res.get("steps") or 0)
+            stats = res.get("stats") or {}
+            tok = stats.get("tok_per_s")
             self.answer.configure(state="normal")
             self.answer.delete("1.0", "end")
-            self.answer.insert("1.0", self.result["final_answer"])
+            self.answer.insert("1.0", final)
             self.answer.configure(state="disabled")
-            self._set_steps(self.result.get("trace", []))
-            stats = self.result.get("stats") or {}
-            tok = stats.get("tok_per_s")
+            self._set_steps(res.get("trace") or [])
             if tok:
                 self.last_stats = stats
-                self.status_lbl.configure(text=f"Done — {self.result['steps']} step(s) • ~{tok:.1f} tok/s")
+                self.status_lbl.configure(text=f"Done — {steps_n} step(s) • ~{tok:.1f} tok/s")
             else:
-                self.status_lbl.configure(text=f"Done — {self.result['steps']} step(s).")
+                self.status_lbl.configure(text=f"Done — {steps_n} step(s).")
             self.cancel_btn.configure(state="disabled")
             return
         if self.busy:
@@ -377,9 +403,11 @@ class App:
     def _set_steps(self, trace):
         for child in self.steps_frame.winfo_children():
             child.destroy()
-        for t in trace:
+        for t in (trace or []):
+            if not isinstance(t, dict):
+                continue
             card = tk.Frame(self.steps_frame, bg=CARD, relief="flat", bd=0)
-            title = tk.Label(card, text=f"step {t['step']}  •  {t['tool']}",
+            title = tk.Label(card, text=f"step {t.get('step', '?')}  •  {t.get('tool', '?')}",
                             font=("Segoe UI", 9), fg=TEXT, bg=CARD)
             args_preview = " ".join(f"{k}={v}" for k, v in list(t.get("args", {}).items())[:4])
             detail = tk.Label(card, text=f"args: {args_preview or '{}'}",
@@ -387,7 +415,7 @@ class App:
             title.pack(anchor="nw")
             detail.pack(anchor="nw")
             card.pack(fill="x", pady=2)
-            hint = (f"{t['tool']} — args: {json.dumps(t.get('args', {}))}\n"
+            hint = (f"{t.get('tool', '?')} — args: {json.dumps(t.get('args', {}))}\n"
                    f"Result:\n{str(t.get('result', ''))[:1500]}")
             self.tip.bind(card, hint)
 
@@ -703,7 +731,8 @@ class App:
         def worker():
             self.llm_ok = self.client.ping()
             self.gpu = gpu_stats()
-            self._update_status()
+            # Tkinter is not thread-safe: hop back to the main thread for widget updates.
+            self.root.after(0, self._update_status)
         threading.Thread(target=worker, daemon=True).start()
 
     def _check_health(self):

@@ -1,5 +1,14 @@
 # Agent Hero — Changelog
 
+## v1.2.1 (2026-10-28)
+
+Fixes for the two post-test bugs in v1.2.0:
+
+1. **"Error Choices" gone** — `llm_client.chat` no longer raises a raw `KeyError('choices')`. Malformed or unreachable server responses now raise clear diagnostics (no usable 'choices' with HTTP status, non-dict body, missing message, unreachable server), shown in the answer box as readable ERROR text.
+2. **New tasks always work after any run** — the worker's `finally` guarantees `busy=False` on every outcome; a stall watchdog (run limit + 30 min margin) force-resets state with "ERROR: run stalled … State reset — you can issue a new task now." A per-run sequence guard stops a late-finishing hung worker from clobbering the live state of a newer run.
+3. **Cancel actually aborts** — `AgentLoop.run` takes an optional `cancel_check`, polled before each step; cancelling ends the run with "(run cancelled)" (the in-flight step finishes first). Backward-compatible for existing callers (`main.py`, `server.py`, selftest).
+4. **Thread-safe status refresh** — background workers no longer touch Tk widgets directly; widget updates hop to the main thread via `root.after(0, …)`. Defensive `_poll`/`_set_steps` so malformed results can't crash the poll chain or step rendering.
+
 ## v1.2.0 (2026-10-27)
 
 Fixes for the five post-test issues:
