@@ -71,17 +71,22 @@ def main():
 
     t = threading.Thread(target=_server, daemon=True)
     t.start()
+    ready = False
     for _ in range(60):
         if _ready():
+            ready = True
             break
         time.sleep(0.5)
-    else:
+    if not ready:
         _log(f"server never became ready; uvicorn thread alive={t.is_alive()}")
 
-    try:
-        os.startfile(URL)  # opens the default browser; harmless if none is set
-    except OSError:
-        pass
+    # The host is the single browser opener: run_gui.bat no longer opens a tab,
+    # so exactly one tab appears whether you double-click the exe or use the bat.
+    if ready:
+        try:
+            os.startfile(URL)  # opens the default browser; harmless if none is set
+        except OSError:
+            pass
 
     t.join()
 

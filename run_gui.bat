@@ -1,9 +1,10 @@
 @echo off
 setlocal
 rem ------------------------------------------------------------------
-rem Agent Hero web UI launcher (v1.3.1)
-rem Starts the no-console FastAPI host and opens http://127.0.0.1:8765
-rem in your default browser once it is actually ready.
+rem Agent Hero web UI launcher (v1.3.2)
+rem Starts the no-console FastAPI host and verifies it is listening.
+rem The host itself opens http://127.0.0.1:8765 once ready,
+rem so exactly one browser tab appears.
 rem
 rem Preferred path: dist\AgentHeroHost.exe  (frozen, self-contained,
 rem   no Python required at runtime, no console window). Built by build_exe.bat.
@@ -34,7 +35,7 @@ rem PowerShell exits 0 as soon as port 8765 is LISTENING, else 1 after the loop.
 powershell -NoProfile -Command "$found=$false; for($i=0;$i -lt 60;$i++){ $l = Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue; if($l){ exit 0 }; Start-Sleep -Milliseconds 1000 }; exit 1"
 if errorlevel 1 goto fail
 
-start "" http://127.0.0.1:8765
+echo OK - Agent Hero is running; the host opened http://127.0.0.1:8765 in your browser.
 exit /b 0
 
 :fail

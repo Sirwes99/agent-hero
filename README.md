@@ -30,7 +30,7 @@ Agent Hero turns any **local AI** (e.g. LM Studio's OpenAI-compatible server) in
 3. **Run it:**
 
    ```bat
-   run_gui.bat        :: launches the web UI with pythonw.exe, waits for readiness, then opens it (v1.3.1)
+   run_gui.bat        :: starts the host and verifies readiness; the host itself opens one browser tab (v1.3.2)
    build_exe.bat      :: builds dist\AgentHeroHost.exe — single-file no-console launcher (double-click to run)
    ```
 
@@ -48,7 +48,7 @@ Agent Hero turns any **local AI** (e.g. LM Studio's OpenAI-compatible server) in
 
 ## GUI
 
-**Primary (v1.3.1): web UI.** `run_gui.bat` starts the FastAPI host with `pythonw.exe` (no console window), waits until the server is actually ready, and opens `http://127.0.0.1:8765` in your default browser. Alternatively, build once with `build_exe.bat` and double-click `dist\AgentHeroHost.exe` — a single-file no-console launcher that does the same thing without needing Python at runtime.
+**Primary (v1.3.2): web UI.** `run_gui.bat` starts the FastAPI host (no console window) and verifies it is listening; the host itself opens `http://127.0.0.1:8765` in your default browser once ready — exactly one tab either way. Alternatively, build once with `build_exe.bat` and double-click `dist\AgentHeroHost.exe` — a single-file no-console launcher that does the same thing without needing Python at runtime.
 
 - **Left-side navigation:** Chat, Settings, Plugins, Folders — minimal rounded buttons; active state is a soft zinc fill, no colored borders.
 - **Chat page:** task box + **Mode** dropdown (Balanced / Precise / Creative / Thinking — each sets temperature and thinking effort for the run) + indigo **Run agent** button + **Cancel**. While working, the status line ticks live (`Working… 12s · step 3`) and each tool step renders as it happens; when done you get the final answer, full trace, elapsed time, and estimated tokens/sec.
@@ -65,7 +65,7 @@ dist\agent_hero\agent_hero.exe
 
 - **No Python needed at runtime** — the exe bundles everything (plugins, config.json).
 - Same left-side navigation and features as above, rendered in a windowed Tkinter UI instead of a browser tab.
-- **Version tracking:** v1.3.1 is shown in the title/status bar; every config save stamps `version` into config.json so you can tell which app version wrote it.
+- **Version tracking:** v1.3.2 is shown in the title/status bar; every config save stamps `version` into config.json so you can tell which app version wrote it.
 - **Self-checks:** `agent_hero.exe --selftest` verifies version, config, plugins, and LLM reachability; `--smoke` additionally builds the full UI (hidden) and verifies every panel has content.
 
 Notes:

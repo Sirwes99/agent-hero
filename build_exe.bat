@@ -1,7 +1,7 @@
 @echo off
 setlocal
 rem ------------------------------------------------------------------
-rem Agent Hero - PyInstaller build script (v1.3.1)
+rem Agent Hero - PyInstaller build script (v1.3.2)
 rem Builds BOTH executables from the agenthero folder:
 rem   1. dist\agent_hero\agent_hero.exe   — windowed Tkinter GUI desktop app
 rem   2. dist\AgentHeroHost.exe           — no-console web host launcher

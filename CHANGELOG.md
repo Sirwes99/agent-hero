@@ -1,5 +1,13 @@
 # Agent Hero — Changelog
 
+## v1.3.2 (2026-10-29)
+
+Fix for the double browser tab:
+
+1. **Exactly one tab now** — both `run_gui.bat` and `host_launcher.py` opened `http://127.0.0.1:8765`, producing two identical tabs. The host launcher is now the single opener (and only opens once it is actually ready); `run_gui.bat` just starts the host, verifies readiness, and prints OK/error — no browser call of its own.
+2. **No dead tab on slow startup** — if the server never becomes ready, the host logs to `%TEMP%\agent_hero_host.log` and exits without opening a browser; the bat still reports the failure clearly.
+3. **Version tracking** — v1.3.2 stamped in the UI, server state, and config.json on every settings save.
+
 ## v1.3.1 (2026-10-29)
 
 Fix for `run_gui.bat` "Unable to connect":
