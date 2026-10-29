@@ -16,6 +16,25 @@ class LLMClient:
         self.api_key = api_key or ""
         self.timeout = int(timeout)
 
+    @staticmethod
+    def _normalize_tools(tools):
+        """Wrap raw {name, description, parameters} schemas into the OpenAI
+        envelope {"type": "function", "function": {...}}. Already-wrapped
+        entries pass through unchanged (idempotent)."""
+        out = []
+        for t in tools or []:
+            if not isinstance(t, dict):
+                continue
+            fn = t.get("function")
+            if t.get("type") == "function" and isinstance(fn, dict):
+                out.append(t)
+            else:
+                out.append({
+                    "type": "function",
+                    "function": {k: t[k] for k in ("name", "description", "parameters") if k in t},
+                })
+        return out
+
     def chat(self, messages, tools=None, extra=None, timeout=None):
         """Send a conversation and return (assistant_message, meta).
 
@@ -28,7 +47,8 @@ class LLMClient:
         """
         base_payload = {"model": self.model, "messages": messages}
         if tools:
-            base_payload["tools"] = tools
+            # Servers validate the OpenAI envelope; wrap raw schemas here.
+            base_payload["tools"] = self._normalize_tools(tools)
         headers = {}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"

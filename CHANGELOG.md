@@ -1,5 +1,11 @@
 # Agent Hero — Changelog
 
+## v1.2.4 (2026-10-28)
+
+Fix for the post-v1.2.3 run failure:
+
+1. **Tool payload now matches server validation** — plugin tool schemas are raw `{name, description, parameters}` entries, but LM Studio validates each `tools` item as the OpenAI envelope `{"type": "function", "function": {...}}`. `LLMClient._normalize_tools` wraps every schema into that envelope (idempotent for already-wrapped manifests), so chat requests no longer fail with HTTP 400 "invalid_literal / expected 'function'".
+
 ## v1.2.3 (2026-10-28)
 
 Fixes for the two bugs found while testing v1.2.2:
