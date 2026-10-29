@@ -13,7 +13,7 @@ from .common import MODES, gpu_stats, load_config, save_config
 from .llm_client import LLMClient
 from .registry import PluginRegistry
 
-VERSION = "1.3.0"
+VERSION = "1.3.1"
 
 
 def create_app():

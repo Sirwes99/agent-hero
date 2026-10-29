@@ -1,5 +1,14 @@
 # Agent Hero — Changelog
 
+## v1.3.1 (2026-10-29)
+
+Fix for `run_gui.bat` "Unable to connect":
+
+1. **Launcher waits for readiness** — `run_gui.bat` no longer opens the browser after a fixed 2 s wait; it polls `netstat` until the server is actually listening (up to 60 s, covering frozen-exe extraction time), then opens `http://127.0.0.1:8765`. If the server never comes up, it prints a clear error instead of leaving a dead browser tab.
+2. **New no-console host exe** — `host_launcher.py` + `agent_hero_host.spec` build `dist\AgentHeroHost.exe` (PyInstaller, single file, `console=False`): double-clicking it starts the web host in a background thread and opens the browser with zero console windows. `build_exe.bat` now builds both executables.
+3. **Version tracking** — v1.3.1 stamped in the UI, server state, and config.json on every settings save.
+4. **Frozen-exe bind failure root-caused & fixed** — in a `console=False` frozen exe, `sys.stdout`/`sys.stderr` are `None`; uvicorn's logging formatter calls `sys.stdout.isatty()` inside the server daemon thread and crashed silently before binding (the "Unable to connect" with no listener). `host_launcher.py` now redirects any missing stdio to `os.devnull` (`_ensure_stdio`) and logs startup failures to `%TEMP%\agent_hero_host.log`, so the exe binds in every launch mode.
+
 ## v1.3.0 (2026-10-29)
 
 Tailwind SaaS web UI rebuild:
