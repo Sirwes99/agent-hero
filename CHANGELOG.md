@@ -1,6 +1,15 @@
 # Agent Hero — Changelog
 
-## v1.2.4 (2026-10-28)
+## v1.3.0 (2026-10-29)
+
+Tailwind SaaS web UI rebuild:
+
+1. **New minimalist web UI** — the browser app at `http://127.0.0.1:8765` is rebuilt with Tailwind (vendored offline JIT compiler in `agenthero/webui/tailwind.js`): light zinc/slate monochrome, generous padding (`p-8` cards), soft rounded corners (`rounded-2xl`), subtle card shadows, Inter-first font stack, and indigo-600 used only on the primary **Run agent** button. Left-side nav (Chat / Settings / Plugins / Folders) with soft zinc active states — no colored borders.
+2. **Live run feedback in the browser** — runs are background threads with a run id; the UI polls `GET /api/status/{run_id}` every 500 ms, so the status line ticks (`Working… 12s · step 3`) and each tool step renders as it happens (new `on_step` callback in `AgentLoop.run`, backward-compatible). Cancel aborts an in-flight run; a finished run always frees state for the next task.
+3. **Full control API** — `GET /api/state`, `POST /api/run`, `POST /api/cancel/{run_id}`, `POST /api/settings` (persists to config.json with version stamp and rebuilds client/loop), `POST /api/folders/add|remove` (absolute-path normalization, case-insensitive dedupe, ≥1 root kept), `POST /api/plugins/toggle` (persisted in `plugins_enabled`). Legacy `/health`, `/tools`, `/v1/chat/completions`, `/agent/run` unchanged.
+4. **Single source of truth for modes** — the MODES presets moved from `gui/app.py` to `agenthero/common.py`; both the web server and the tkinter GUI import them, and `/api/state` exposes the list.
+5. **Launcher updated** — `run_gui.bat` now starts the FastAPI host with `pythonw.exe` (no console window) and opens `http://127.0.0.1:8765` in the default browser. The tkinter EXE remains as a bundled alternative.
+6. **Version tracking** — v1.3.0 stamped in the UI, server state, and config.json on every settings save.
 
 Fix for the post-v1.2.3 run failure:
 

@@ -24,13 +24,14 @@ class AgentLoop:
         self.max_iterations = int(max_iterations)
 
     def run(self, messages, system_prompt=None, extra=None, overall_timeout=None,
-            cancel_check=None):
+            cancel_check=None, on_step=None):
         """Run the loop. `extra` is merged into each chat payload (mode presets).
         `overall_timeout` caps total wall time; per-step request timeouts shrink as
         the deadline approaches so a hung server can never stall the run forever.
         `cancel_check`, if given, is polled before every step; when it returns True
         the loop stops and reports "(run cancelled)" (the in-flight step finishes
-        first)."""
+        first). `on_step`, if given, is called after each tool execution with
+        (step, tool_name, args, result) so callers can render live progress."""
         msgs = [dict(m) for m in messages]
         if not any(m.get("role") == "system" for m in msgs):
             msgs.insert(0, {"role": "system", "content": system_prompt or DEFAULT_SYSTEM_PROMPT})
@@ -89,6 +90,11 @@ class AgentLoop:
                     args = {}
                 result = self.registry.execute(name, args)
                 trace.append({"step": step, "tool": name, "args": args, "result": result[:4000]})
+                if on_step:
+                    try:
+                        on_step(step, name, args, result)
+                    except Exception:
+                        pass
                 msgs.append({
                     "role": "tool",
                     "tool_call_id": tc.get("id") or f"call_{step}_{name}",

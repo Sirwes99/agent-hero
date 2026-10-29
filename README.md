@@ -30,7 +30,7 @@ Agent Hero turns any **local AI** (e.g. LM Studio's OpenAI-compatible server) in
 3. **Run it:**
 
    ```bat
-   run_gui.bat        :: launches the GUI with pythonw.exe — no console window stays open (v1.2.0)
+   run_gui.bat        :: launches the web UI with pythonw.exe — no console window stays open (v1.3.0)
    run.bat            :: installs deps + starts the host on http://127.0.0.1:8765
    ```
 
@@ -46,21 +46,26 @@ Agent Hero turns any **local AI** (e.g. LM Studio's OpenAI-compatible server) in
    - Or from the terminal: `python main.py ask "Build a Python CLI that converts CSV to JSON and test it"`.
    - Any OpenAI-compatible client can treat Agent Hero as a model: point it at `http://127.0.0.1:8765/v1/chat/completions` — the agent loop runs inside, and the response includes an `agent_trace` of every tool call.
 
-## GUI (Windows EXE)
+## GUI
 
-A ready-to-run graphical app is built with PyInstaller:
+**Primary (v1.3.0): web UI.** `run_gui.bat` starts the FastAPI host with `pythonw.exe` (no console window) and opens `http://127.0.0.1:8765` in your default browser.
+
+- **Left-side navigation:** Chat, Settings, Plugins, Folders — minimal rounded buttons; active state is a soft zinc fill, no colored borders.
+- **Chat page:** task box + **Mode** dropdown (Balanced / Precise / Creative / Thinking — each sets temperature and thinking effort for the run) + indigo **Run agent** button + **Cancel**. While working, the status line ticks live (`Working… 12s · step 3`) and each tool step renders as it happens; when done you get the final answer, full trace, elapsed time, and estimated tokens/sec.
+- **Settings page:** LLM endpoint/model/key/timeout, max steps, **Run limit (s)** (hard wall-clock deadline per run), mode — saved straight to `config.json` with a version stamp.
+- **Plugins page:** every plugin folder listed with its tools; one tap toggles it on/off (persisted in `plugins_enabled`).
+- **Folders page:** add/remove allowed roots with visible feedback, absolute-path normalization, case-insensitive dedupe, at least one root always kept.
+- **Status strip** (sidebar): version, LLM reachability, model/mode, and GPU VRAM via `nvidia-smi` when available.
+
+**Alternative: tkinter EXE.** A ready-to-run desktop app is built with PyInstaller:
 
 ```bat
 dist\agent_hero\agent_hero.exe
 ```
 
-- **No Python needed at runtime** — the exe bundles everything (plugins, config.json, web host deps).
-- **Left-side navigation:** Chat, Settings, Plugins, Folders — modern flat buttons with hover tooltips on every control.
-- **Chat page:** task box + **Run agent**, a **Mode** dropdown (Balanced / Precise / Creative / Thinking — each sets temperature and thinking effort for the run), and a **Cancel** button that aborts an in-flight run. The status line shows live elapsed seconds while working, then final steps + estimated tokens/sec.
-- **Settings page:** LLM endpoint/model/key/timeout, max steps, **Run limit (s)** (hard wall-clock deadline per run; step timeouts shrink toward it), web host start/stop.
-- **Folders page:** add/remove allowed roots with visible feedback ("Added …" / "Removed …"), plus a built-in read-only folder browser: pick an allowed root and press **Show contents** to preview its top-level files/folders.
-- **Status bar:** LLM reachability, loaded tool count, web-host state, GPU VRAM usage (via `nvidia-smi` when available) and last-run token speed; the **Status** button refreshes everything immediately. A background health check re-pings every ~10 s.
-- **Version tracking:** v1.2.0 is shown in the title and status bar; every config save stamps `version` into config.json so you can tell which app version wrote it.
+- **No Python needed at runtime** — the exe bundles everything (plugins, config.json).
+- Same left-side navigation and features as above, rendered in a windowed Tkinter UI instead of a browser tab.
+- **Version tracking:** v1.3.0 is shown in the title/status bar; every config save stamps `version` into config.json so you can tell which app version wrote it.
 - **Self-checks:** `agent_hero.exe --selftest` verifies version, config, plugins, and LLM reachability; `--smoke` additionally builds the full UI (hidden) and verifies every panel has content.
 
 Notes:
@@ -74,6 +79,7 @@ Notes:
 - `GET /tools` — all plugin manifests and schemas.
 - `POST /v1/chat/completions` — OpenAI-compatible chat (runs the agent loop).
 - `POST /agent/run` — `{ "prompt": "..." }` → final answer + trace.
+- Web UI control API: `GET /api/state`, `POST /api/run` (+ `GET /api/status/{run_id}`, `POST /api/cancel/{run_id}`), `POST /api/settings`, `POST /api/folders/add|remove`, `POST /api/plugins/toggle`.
 
 ## Adding your own plugin
 

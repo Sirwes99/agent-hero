@@ -2,66 +2,320 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Agent Hero — universal local agent host</title>
+<title>Agent Hero</title>
+<script src="/tailwind.js"></script>
 <style>
-  :root { color-scheme: dark; }
-  body { font-family: "Segoe UI", system-ui, sans-serif; background: #0f172a; color: #e2e8f0; margin: 0; }
-  .wrap { max-width: 960px; margin: 24px auto; padding: 0 16px; }
-  h1 { font-size: 22px; margin-bottom: 4px; }
-  .sub { color: #94a3b8; font-size: 14px; margin-bottom: 16px; }
-  textarea { width: 100%; box-sizing: border-box; min-height: 110px; background: #1e293b; color: #e2e8f0;
-           border: 1px solid #334155; border-radius: 8px; padding: 10px; font-size: 14px; resize: vertical; }
-  button { margin-top: 10px; background: #2563eb; color: white; border: 0; border-radius: 8px;
-           padding: 10px 18px; font-size: 14px; cursor: pointer; }
-  button:disabled { opacity: .5; }
-  .answer { margin-top: 16px; background: #1e293b; border: 1px solid #334155; border-radius: 8px;
-            padding: 12px; white-space: pre-wrap; font-size: 14px; }
-  .trace { margin-top: 16px; }
-  .step { background: #172033; border-left: 3px solid #38bdf8; border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; font-size: 12.5px; }
-  .step b { color: #7dd3fc; }
-  .meta { color: #64748b; font-size: 12px; margin-top: 12px; }
+  body { font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif; }
 </style>
 </head>
-<body>
-<div class="wrap">
-  <h1>Agent Hero</h1>
-  <div class="sub">Give your local AI a full toolbox: shell, files, web search, downloads/installs, code runner, git.</div>
+<body class="bg-zinc-100 text-slate-900 antialiased">
 
-  <textarea id="prompt" placeholder='e.g. "Build a Python CLI tool that converts CSV to JSON and test it"'></textarea>
-  <button id="go">Run agent</button>
+<div class="flex h-screen overflow-hidden">
 
-  <div class="answer" id="answer"></div>
-  <div class="trace" id="trace"></div>
-  <div class="meta" id="meta"></div>
+  <!-- Sidebar -->
+  <aside class="w-64 shrink-0 bg-white border-r border-zinc-200 flex flex-col p-6 gap-6">
+    <div>
+      <h1 class="text-lg font-semibold tracking-tight text-slate-900">Agent Hero</h1>
+      <p id="version" class="mt-1.5 text-xs text-slate-400"></p>
+    </div>
+
+    <nav id="nav" class="flex flex-col gap-2">
+      <button data-page="chat" class="w-full rounded-xl px-4 py-3 text-sm font-medium text-slate-500 hover:bg-zinc-100 transition-colors">Chat</button>
+      <button data-page="settings" class="w-full rounded-xl px-4 py-3 text-sm font-medium text-slate-500 hover:bg-zinc-100 transition-colors">Settings</button>
+      <button data-page="plugins" class="w-full rounded-xl px-4 py-3 text-sm font-medium text-slate-500 hover:bg-zinc-100 transition-colors">Plugins</button>
+      <button data-page="folders" class="w-full rounded-xl px-4 py-3 text-sm font-medium text-slate-500 hover:bg-zinc-100 transition-colors">Folders</button>
+    </nav>
+
+    <div class="mt-auto">
+      <div id="health" class="rounded-xl bg-zinc-50 border border-zinc-200 p-4 text-xs leading-relaxed text-slate-500"></div>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="flex-1 overflow-y-auto p-8">
+    <div class="max-w-3xl mx-auto flex flex-col gap-6">
+
+      <!-- Chat -->
+      <section id="page-chat" class="hidden flex flex-col gap-6">
+        <header>
+          <h2 class="text-xl font-semibold text-slate-900">Run the agent</h2>
+          <p class="mt-1.5 text-sm text-slate-500">Describe what to build or do — it plans, acts with tools, and iterates until done.</p>
+        </header>
+
+        <div class="bg-white rounded-2xl shadow-sm border border-zinc-200 p-8 flex flex-col gap-4">
+          <label for="prompt" class="text-xs font-medium uppercase tracking-wide text-slate-400">Task</label>
+          <textarea id="prompt" rows="6" placeholder='e.g. "Build a Python CLI that converts CSV to JSON and test it"'
+            class="w-full rounded-xl bg-zinc-50 border border-zinc-200 p-4 text-sm leading-relaxed resize-y"></textarea>
+
+          <div class="flex items-center gap-3">
+            <label for="mode" class="text-xs font-medium uppercase tracking-wide text-slate-400">Mode</label>
+            <select id="mode" class="rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-sm"></select>
+            <div class="flex-1"></div>
+            <button id="cancel" disabled class="rounded-xl border border-zinc-200 px-4 py-2.5 text-sm font-medium text-slate-500 hover:bg-zinc-100 transition-colors">Cancel</button>
+            <button id="run" class="rounded-xl bg-indigo-600 px-6 py-3 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500 transition-colors">Run agent</button>
+          </div>
+
+          <p id="statusline" class="text-xs text-slate-400"></p>
+        </div>
+
+        <div class="bg-white rounded-2xl shadow-sm border border-zinc-200 p-8">
+          <h3 class="mb-3 text-xs font-medium uppercase tracking-wide text-slate-400">Answer</h3>
+          <div id="answer" class="whitespace-pre-wrap text-[15px] leading-relaxed text-slate-700"></div>
+        </div>
+
+        <div id="steps" class="hidden flex flex-col gap-3"></div>
+      </section>
+
+      <!-- Settings -->
+      <section id="page-settings" class="hidden flex flex-col gap-6">
+        <header>
+          <h2 class="text-xl font-semibold text-slate-900">Model &amp; host settings</h2>
+          <p class="mt-1.5 text-sm text-slate-500">Point the agent at your local LLM and tune how far it may run.</p>
+        </header>
+
+        <div class="bg-white rounded-2xl shadow-sm border border-zinc-200 p-8 flex flex-col gap-4">
+          <label for="f-base_url" class="text-xs font-medium uppercase tracking-wide text-slate-400">Base URL</label>
+          <input id="f-base_url" placeholder="http://localhost:1235/v1" class="w-full rounded-xl bg-zinc-50 border border-zinc-200 px-3 py-2.5 text-sm">
+
+          <label for="f-model" class="text-xs font-medium uppercase tracking-wide text-slate-400 mt-3">Model</label>
+          <input id="f-model" placeholder="local-model" class="w-full rounded-xl bg-zinc-50 border border-zinc-200 px-3 py-2.5 text-sm">
+
+          <label for="f-api_key" class="text-xs font-medium uppercase tracking-wide text-slate-400 mt-3">API key</label>
+          <input id="f-api_key" placeholder="(optional)" class="w-full rounded-xl bg-zinc-50 border border-zinc-200 px-3 py-2.5 text-sm">
+
+          <div class="grid grid-cols-3 gap-4 mt-3">
+            <div>
+              <label for="f-timeout" class="text-xs font-medium uppercase tracking-wide text-slate-400">Step timeout (s)</label>
+              <input id="f-timeout" type="number" min="5" class="w-full rounded-xl bg-zinc-50 border border-zinc-200 px-3 py-2.5 text-sm mt-1">
+            </div>
+            <div>
+              <label for="f-maxiters" class="text-xs font-medium uppercase tracking-wide text-slate-400">Max steps</label>
+              <input id="f-maxiters" type="number" min="1" class="w-full rounded-xl bg-zinc-50 border border-zinc-200 px-3 py-2.5 text-sm mt-1">
+            </div>
+            <div>
+              <label for="f-runlimit" class="text-xs font-medium uppercase tracking-wide text-slate-400">Run limit (s)</label>
+              <input id="f-runlimit" type="number" min="30" class="w-full rounded-xl bg-zinc-50 border border-zinc-200 px-3 py-2.5 text-sm mt-1">
+            </div>
+          </div>
+
+          <label for="f-mode" class="text-xs font-medium uppercase tracking-wide text-slate-400 mt-3">Mode</label>
+          <select id="f-mode" class="w-full rounded-xl border border-zinc-200 bg-white px-3 py-2.5 text-sm mt-1"></select>
+
+          <div class="flex justify-end mt-4">
+            <button id="save-settings" class="rounded-xl bg-slate-800 px-6 py-3 text-sm font-semibold text-white shadow-sm hover:bg-slate-700 transition-colors">Save settings</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Plugins -->
+      <section id="page-plugins" class="hidden flex flex-col gap-6">
+        <header>
+          <h2 class="text-xl font-semibold text-slate-900">Plugins</h2>
+          <p class="mt-1.5 text-sm text-slate-500">Every capability is a plugin folder — toggle the ones your agent should use.</p>
+        </header>
+
+        <div id="plugin-list" class="bg-white rounded-2xl shadow-sm border border-zinc-200 p-8 flex flex-col gap-4"></div>
+      </section>
+
+      <!-- Folders -->
+      <section id="page-folders" class="hidden flex flex-col gap-6">
+        <header>
+          <h2 class="text-xl font-semibold text-slate-900">Workspace folders</h2>
+          <p class="mt-1.5 text-sm text-slate-500">The agent can only read and write inside allowed roots.</p>
+        </header>
+
+        <div class="bg-white rounded-2xl shadow-sm border border-zinc-200 p-8 flex flex-col gap-4">
+          <label for="folder-path" class="text-xs font-medium uppercase tracking-wide text-slate-400">Folder path</label>
+          <div class="flex items-center gap-3 mt-1">
+            <input id="folder-path" placeholder="C:\Users\wesma\Projects" class="flex-1 rounded-xl bg-zinc-50 border border-zinc-200 px-3 py-2.5 text-sm">
+            <button id="folder-add" class="rounded-xl bg-slate-800 px-4 py-2.5 text-sm font-medium text-white hover:bg-slate-700 transition-colors">Add</button>
+          </div>
+
+          <p id="folder-msg" class="text-xs text-slate-400"></p>
+          <ul id="folder-list" class="flex flex-col gap-2 mt-3"></ul>
+        </div>
+      </section>
+
+    </div>
+  </main>
 </div>
 
 <script>
-const btn = document.getElementById("go");
-btn.onclick = async () => {
-  const prompt = document.getElementById("prompt").value.trim();
-  if (!prompt) return;
-  btn.disabled = true;
-  document.getElementById("answer").textContent = "Working…";
-  document.getElementById("trace").innerHTML = "";
+const $ = (id) => document.getElementById(id);
+let state = null;
+let runId = null;
+let pollTimer = null;
+
+const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const escAttr = (s) => esc(s).replace(/"/g, "&quot;");
+
+async function refresh() {
   try {
-    const r = await fetch("/agent/run", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt })
-    });
-    const data = await r.json();
-    document.getElementById("answer").textContent = data.final_answer || "(no answer)";
-    document.getElementById("trace").innerHTML = (data.trace || []).map(t => {
-      const args = JSON.stringify(t.args).slice(0, 160);
-      return `<div class="step"><b>${t.tool}</b> ${args}<br><span>${String(t.result).slice(0, 400)}</span></div>`;
-    }).join("");
-    document.getElementById("meta").textContent = `steps: ${data.steps}`;
+    const r = await fetch("/api/state");
+    if (!r.ok) throw new Error("state request failed (" + r.status + ")");
+    state = await r.json();
+    render(state);
   } catch (e) {
-    document.getElementById("answer").textContent = "Error: " + e.message;
-  } finally {
-    btn.disabled = false;
+    $("health").textContent = "Host unreachable: " + e.message;
+  }
+}
+
+function fillModes(sel, current) {
+  sel.innerHTML = state.modes.map(m => `<option value="${m}"${m === current ? ' selected' : ''}>${m}</option>`).join("");
+}
+
+function render(s) {
+  $("version").textContent = "v" + s.version;
+
+  const vram = (s.health.vram || []).map(g => `${g.name}: ${(g.used_mib / 1024).toFixed(1)} / ${(g.total_mib / 1024).toFixed(1)} GB`).join(" · ");
+  $("health").innerHTML = `
+    <div class="flex items-center gap-2">
+      <span class="h-2 w-2 rounded-full ${s.health.llm_reachable ? "bg-slate-900" : "bg-zinc-300"}"></span>
+      <span>${s.health.llm_reachable ? "LLM reachable" : "LLM unreachable"}</span>
+    </div>
+    <div class="mt-2">${esc(s.llm.base_url)}<br>${esc(s.llm.model)} · mode ${esc(s.llm.mode)}</div>
+    ${vram ? `<div class="mt-2">VRAM: ${esc(vram)}</div>` : ""}`;
+
+  fillModes($("mode"), s.llm.mode);
+  fillModes($("f-mode"), s.llm.mode);
+  $("f-base_url").value = s.llm.base_url;
+  $("f-model").value = s.llm.model;
+  $("f-api_key").value = s.llm.api_key || "";
+  $("f-timeout").value = s.agent.timeout_seconds ?? "";
+  $("f-maxiters").value = s.agent.max_iterations;
+  $("f-runlimit").value = s.agent.overall_timeout_seconds;
+
+  $("plugin-list").innerHTML = s.plugins.map(p => `
+    <div class="flex items-start gap-3">
+      <div class="min-w-0 flex-1">
+        <p class="text-sm font-medium text-slate-900">${esc(p.name)}</p>
+        <p class="mt-0.5 text-xs text-slate-500">${esc(p.description)}${p.tools.length ? " — " + p.tools.map(t => `<span class="font-mono">${t}</span>`).join(", ") : ""}</p>
+      </div>
+      <button data-name="${escAttr(p.name)}" class="toggle-btn rounded-full px-3 py-1.5 text-xs font-medium ${p.enabled ? "bg-slate-900 text-white" : "bg-zinc-200 text-slate-500"}">${p.enabled ? "on" : "off"}</button>
+    </div>`).join("");
+
+  $("folder-list").innerHTML = s.folders.map(f => `
+    <li class="flex items-center gap-3">
+      <span class="min-w-0 flex-1 truncate text-sm text-slate-700">${esc(f)}</span>
+      <button data-path="${escAttr(f)}" class="rounded-lg px-3 py-1.5 text-xs font-medium text-slate-400 hover:bg-zinc-100 transition-colors">Remove</button>
+    </li>`).join("");
+}
+
+function setPage(name) {
+  document.querySelectorAll("section").forEach(sec => sec.classList.add("hidden"));
+  $("page-" + name).classList.remove("hidden");
+  document.querySelectorAll("#nav button").forEach(b => {
+    const active = b.dataset.page === name;
+    b.className = "w-full rounded-xl px-4 py-3 text-sm font-medium transition-colors " +
+      (active ? "bg-zinc-200 text-slate-900" : "text-slate-500 hover:bg-zinc-100");
+  });
+}
+
+function renderSteps(trace) {
+  const el = $("steps");
+  if (!trace.length) { el.classList.add("hidden"); el.innerHTML = ""; return; }
+  el.classList.remove("hidden");
+  el.innerHTML = trace.map(t => `
+    <div class="bg-white rounded-2xl shadow-sm border border-zinc-200 p-5">
+      <p class="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">Step ${t.step} — ${esc(t.tool)}</p>
+      <p class="text-xs break-all text-slate-500">${esc(JSON.stringify(t.args))}</p>
+      <p class="mt-1.5 whitespace-pre-wrap text-sm text-slate-700">${esc(String(t.result).slice(0, 600))}</p>
+    </div>`).join("");
+}
+
+$("run").onclick = async () => {
+  const prompt = $("prompt").value.trim();
+  if (!prompt) return;
+  const mode = $("mode").value;
+  $("run").disabled = true;
+  $("cancel").disabled = false;
+  $("answer").textContent = "Working…";
+  renderSteps([]);
+  $("statusline").textContent = "";
+  try {
+    const r = await fetch("/api/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt, mode }) });
+    if (!r.ok) throw new Error(((await r.json()).error || ("HTTP " + r.status)));
+    runId = (await r.json()).run_id;
+    pollTimer = setInterval(poll, 500);
+  } catch (e) {
+    $("answer").textContent = "Error: " + e.message;
+    $("statusline").textContent = "";
+    $("run").disabled = false;
+    $("cancel").disabled = true;
   }
 };
+
+async function poll() {
+  try {
+    const d = await (await fetch("/api/status/" + runId)).json();
+    if (!d.busy) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+      $("answer").textContent = d.final_answer || "(no answer)";
+      renderSteps(d.trace || []);
+      const stats = d.stats || {};
+      $("statusline").textContent = `Done — ${d.steps} step(s)` + (stats.tok_per_s ? ` · ~${stats.tok_per_s.toFixed(1)} tok/s` : "") + (stats.elapsed_s != null ? ` · ${stats.elapsed_s}s` : "");
+      $("run").disabled = false;
+      $("cancel").disabled = true;
+      runId = null;
+    } else {
+      $("statusline").textContent = `Working… ${d.elapsed_s}s · step ${d.steps_done}`;
+    }
+  } catch (e) { /* keep polling */ }
+}
+
+$("cancel").onclick = async () => { if (runId) await fetch("/api/cancel/" + runId, { method: "POST" }); };
+
+$("save-settings").onclick = async () => {
+  const body = {
+    base_url: $("f-base_url").value.trim(),
+    model: $("f-model").value.trim(),
+    api_key: $("f-api_key").value,
+    timeout_seconds: parseInt($("f-timeout").value),
+    max_iterations: parseInt($("f-maxiters").value),
+    overall_timeout_seconds: parseInt($("f-runlimit").value),
+    mode: $("f-mode").value,
+  };
+  try {
+    const r = await fetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (!r.ok) throw new Error(((await r.json()).error || ("HTTP " + r.status)));
+    state = await r.json();
+    render(state);
+  } catch (e) { alert("Save failed: " + e.message); }
+};
+
+$("plugin-list").onclick = async (ev) => {
+  const btn = ev.target.closest("button.toggle-btn");
+  if (!btn) return;
+  await fetch("/api/plugins/toggle", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: btn.dataset.name, enabled: btn.textContent !== "on" }) });
+  refresh();
+};
+
+$("folder-add").onclick = async () => {
+  const path = $("folder-path").value.trim();
+  if (!path) return;
+  try {
+    const r = await fetch("/api/folders/add", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }) });
+    if (!r.ok) throw new Error(((await r.json()).error || ("HTTP " + r.status)));
+    $("folder-msg").textContent = (await r.json()).message;
+    refresh();
+  } catch (e) { $("folder-msg").textContent = e.message; }
+};
+
+$("folder-list").onclick = async (ev) => {
+  const btn = ev.target.closest("button");
+  if (!btn || !btn.dataset.path) return;
+  try {
+    const r = await fetch("/api/folders/remove", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: btn.dataset.path }) });
+    if (!r.ok) throw new Error(((await r.json()).error || ("HTTP " + r.status)));
+    $("folder-msg").textContent = (await r.json()).message;
+    refresh();
+  } catch (e) { $("folder-msg").textContent = e.message; }
+};
+
+document.querySelectorAll("#nav button").forEach(b => b.onclick = () => setPage(b.dataset.page));
+setPage("chat");
+refresh();
 </script>
 </body>
 </html>

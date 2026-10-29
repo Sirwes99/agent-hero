@@ -5,11 +5,25 @@ import subprocess
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+# Quick model-mode presets: temperature + reasoning_effort sent with each chat.
+MODES = {
+    "Balanced": {"temperature": 0.7, "reasoning_effort": "low"},
+    "Precise": {"temperature": 0.2, "reasoning_effort": "none"},
+    "Creative": {"temperature": 1.0, "reasoning_effort": "low"},
+    "Thinking": {"temperature": 0.4, "reasoning_effort": "high"},
+}
+
 
 def load_config():
     path = os.path.join(PROJECT_ROOT, "config.json")
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def save_config(cfg, path=None):
+    """Write config to disk (defaults to the project's config.json)."""
+    with open(path or os.path.join(PROJECT_ROOT, "config.json"), "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2)
 
 
 def allowed_roots(cfg=None):

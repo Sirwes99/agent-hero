@@ -13,7 +13,7 @@ import time
 import tkinter as tk
 from tkinter import filedialog, ttk
 
-VERSION = "1.2.4"
+VERSION = "1.3.0"
 
 
 def base_dir():
@@ -26,7 +26,7 @@ def base_dir():
 sys.path.insert(0, base_dir())  # make the agenthero package importable when run from source
 
 from agenthero.agent_loop import AgentLoop
-from agenthero.common import gpu_stats
+from agenthero.common import MODES, gpu_stats, save_config
 from agenthero.llm_client import LLMClient
 from agenthero.registry import PluginRegistry
 
@@ -44,14 +44,6 @@ TEXT = "#e6e9f0"
 MUTED = "#9aa3b8"
 SHADOW = "#0c0f16"   # fake drop-shadow color (darker than BG)
 EDGE = "#3d4763"     # grey outline between panes and card rings
-
-# Quick model-mode presets: temperature + reasoning_effort sent with each chat.
-MODES = {
-    "Balanced": {"temperature": 0.7, "reasoning_effort": "low"},
-    "Precise": {"temperature": 0.2, "reasoning_effort": "none"},
-    "Creative": {"temperature": 1.0, "reasoning_effort": "low"},
-    "Thinking": {"temperature": 0.4, "reasoning_effort": "high"},
-}
 
 
 def make_card(parent, inner_bg=CARD):
@@ -87,10 +79,6 @@ def load_config():
     cfg.setdefault("version", VERSION)
     return cfg
 
-
-def save_config(cfg):
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, indent=2)
 
 
 class TooltipManager:
@@ -259,7 +247,7 @@ class App:
     def _persist(self):
         """Save config, stamping it with the app version for change tracking."""
         self.cfg["version"] = VERSION
-        save_config(self.cfg)
+        save_config(self.cfg, CONFIG_PATH)
 
     # ------------------------------------------------------------------ Chat
     def _build_chat(self):
