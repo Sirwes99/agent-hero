@@ -49,6 +49,14 @@ def _ready() -> bool:
 def main():
     _ensure_stdio()
 
+    # Idempotent launch guard: if another host instance is already listening on
+    # PORT, exit without starting uvicorn or opening a second browser tab. Any
+    # relaunch (e.g. an agent task that re-runs the launcher) becomes harmless —
+    # no duplicate process and no duplicate tab.
+    if _ready():
+        _log("host already running on port %d — skipping startup, no new tab" % PORT)
+        return
+
     # In a frozen onefile exe, __file__ lives in the temp extraction dir; make sure
     # config.json exists there (the bundled copy is used when present).
     root = os.path.dirname(os.path.abspath(__file__))

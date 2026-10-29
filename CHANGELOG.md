@@ -1,5 +1,12 @@
 # Agent Hero — Changelog
 
+## v1.3.3 (2026-10-29)
+
+Fix for duplicate browser tabs appearing during task runs:
+
+1. **Idempotent host launcher** — `host_launcher.py` now checks whether port 8765 is already listening before starting uvicorn; if a previous instance is still running, it logs "host already running … skipping startup" and exits without opening a second tab. Any relaunch (e.g. an agent task that re-runs the launcher) is harmless — no duplicate process, no duplicate tab.
+2. **Agent guidance** — the default system prompt now tells the agent not to open browser tabs or relaunch the host; it should verify the web host with HTTP requests (`Invoke-RestMethod` against `/api/state`) instead of `start` commands.
+
 ## v1.3.2 (2026-10-29)
 
 Fix for the double browser tab:

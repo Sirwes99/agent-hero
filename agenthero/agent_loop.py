@@ -13,7 +13,8 @@ DEFAULT_SYSTEM_PROMPT = (
     "- envinfo: inspect the environment\n"
     "Work step by step: plan, act with tools, verify results, and iterate until the task is complete.\n"
     "If something you need is missing (a library, a file, documentation), search online or install it first.\n"
-    "Create new files inside the workspace. Be concise in your final answer."
+    "Create new files inside the workspace. Be concise in your final answer.\n"
+    "Important: do not open browser tabs or relaunch the Agent Hero host (no `start http://127.0.0.1:8765`, no re-running run_gui.bat or AgentHeroHost.exe). If you need to verify the web host is running, use an HTTP request instead (e.g. PowerShell Invoke-RestMethod against http://127.0.0.1:8765/api/state)."
 )
 
 
